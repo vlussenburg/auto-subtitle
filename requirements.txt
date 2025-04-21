@@ -1,1 +1,7 @@
 openai-whisper
+stable-ts
+torch
+torchaudio
+torchvision
+ffmpeg-python
+openai

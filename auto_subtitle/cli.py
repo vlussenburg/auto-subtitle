@@ -1,9 +1,11 @@
 import os
 import ffmpeg
-import whisper
+import stable_whisper
 import argparse
 import warnings
 import tempfile
+import torch
+import openai
 from .utils import filename, str2bool, write_srt
 
 
@@ -13,7 +15,7 @@ def main():
     parser.add_argument("video", nargs="+", type=str,
                         help="paths to video files to transcribe")
     parser.add_argument("--model", default="small",
-                        choices=whisper.available_models(), help="name of the Whisper model to use")
+                        help="name of the Whisper model to use")
     parser.add_argument("--output_dir", "-o", type=str,
                         default=".", help="directory to save the outputs")
     parser.add_argument("--output_srt", type=str2bool, default=False,
@@ -45,16 +47,18 @@ def main():
     elif language != "auto":
         args["language"] = language
         
-    model = whisper.load_model(model_name)
+    model = stable_whisper.load_model(model_name)
     audios = get_audio(args.pop("video"))
     subtitles = get_subtitles(
-        audios, output_srt or srt_only, output_dir, lambda audio_path: model.transcribe(audio_path, **args)
+        audios, output_srt or srt_only, output_dir, model
     )
+
+    #modified_subtitles = modify_subtitles(subtitles, output_srt, output_dir)
 
     if srt_only:
         return
 
-    for path, srt_path in subtitles.items():
+    for path, ass_path in subtitles.items():
         out_path = os.path.join(output_dir, f"{filename(path)}.mp4")
 
         print(f"Adding subtitles to {filename(path)}...")
@@ -63,11 +67,75 @@ def main():
         audio = video.audio
 
         ffmpeg.concat(
-            video.filter('subtitles', srt_path, force_style="OutlineColour=&H40000000,BorderStyle=3"), audio, v=1, a=1
-        ).output(out_path).run(quiet=True, overwrite_output=True)
+            video.filter('subtitles', ass_path), audio, v=1, a=1
+        ).output(out_path, vcodec="h264_videotoolbox").run(quiet=True, overwrite_output=True)
 
         print(f"Saved subtitled video to {os.path.abspath(out_path)}.")
 
+def modify_subtitles(subtitles, output_srt, output_dir):
+
+    client = openai.OpenAI(api_key="")
+    modified_subtitles = {}
+    srt_path = output_dir if output_srt else tempfile.gettempdir()
+
+    for path, ass_path in subtitles.items():
+        with open(ass_path, "r", encoding="utf-8") as file:
+            subtitle_text = file.read()
+
+            print(
+                f"Modifying subtitles with gpt-4o for {filename(ass_path)}... This might take a while."
+            )
+
+            prompt = f"""
+                You are an expert in subtitle styling for viral social media content. 
+
+                I need you to modify the following subtitle transcript into a **TikTok-style subtitle file** in **ASS (Advanced SubStation Alpha) format**. Follow these exact specifications:
+
+                1️⃣ **FONT & OUTLINE**  
+                - Use a **bold, comic-style font** (e.g., Impact or Arial Black).  
+                - All text should have a **thick black outline** for visibility.  
+
+                2️⃣ **COLOR HIGHLIGHTING**  
+                - Most words should be **white with a black outline**.  
+                - Highlight **important words** (e.g., emotional, power words) in **red**.  
+
+                3️⃣ **POSITIONING**  
+                - Place the subtitles **near the speaker's mouth**, **centered horizontally**.  
+                - Adjust positioning slightly per sentence for a natural effect.  
+
+                4️⃣ **ANIMATION EFFECTS**  
+                - Use the `\\t()` tag in ASS to make key words **pop** (slight scaling effect).  
+                - Add subtle `\\move()` effects where necessary.  
+
+                5️⃣ **EMOJIS**  
+                - Add a **relevant emoji every few sentences** to match the tone.  
+                - Example: If the sentence is about thinking, add 🧠.  
+                - If it's exciting, add 🚀.  
+
+                6️⃣ **OUTPUT FORMAT**  
+                - The output should be a **fully formatted .ass file** with proper `[Script Info]`, `[V4+ Styles]`, and `[Events]` sections.  
+                - **Return only the .ass file content**, no explanations, no markdown, no backticks.
+
+                Here is the transcript:  
+                ```{subtitle_text}```
+            """
+
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7
+            )
+
+            # Save the modified subtitles
+            out_file = os.path.join(srt_path, f"{filename(path)}_modified.ass")
+            with open(out_file, "w", encoding="utf-8") as file:
+                file.write(response.choices[0].message.content.strip())
+
+            print(f"Saved modified subtitle to {os.path.abspath(out_file)}.")
+
+            modified_subtitles[path] = out_file
+
+    return modified_subtitles
 
 def get_audio(paths):
     temp_dir = tempfile.gettempdir()
@@ -88,25 +156,49 @@ def get_audio(paths):
     return audio_paths
 
 
-def get_subtitles(audio_paths: list, output_srt: bool, output_dir: str, transcribe: callable):
+def get_subtitles(audio_paths: list, output_srt: bool, output_dir: str, model: stable_whisper):
     subtitles_path = {}
 
     for path, audio_path in audio_paths.items():
         srt_path = output_dir if output_srt else tempfile.gettempdir()
-        srt_path = os.path.join(srt_path, f"{filename(path)}.srt")
+        #srt_file = os.path.join(srt_path, f"{filename(path)}.srt")
+        ass_file = os.path.join(srt_path, f"{filename(path)}.ass")
         
         print(
             f"Generating subtitles for {filename(path)}... This might take a while."
         )
 
         warnings.filterwarnings("ignore")
-        result = transcribe(audio_path)
+        transcribe = model.transcribe(audio_path, regroup=True, fp16=torch.cuda.is_available())
+
+        # **Split subtitles naturally for TikTok style**
+        transcribe.split_by_gap(0.5)  # Split when there's a 0.5s silence
+        transcribe.split_by_length(max_words=3)
+        #transcribe.merge_by_gap(0.2, max_words=2)
+
+        #transcribe.to_srt_vtt(str(srt_file), word_level=True)
+        
+        # Save the SSA file with styling
+        transcribe.to_ass(
+            ass_file,
+            word_level=True,
+            primary_color="FFFFFF",
+            secondary_color="FFFFFF",
+            highlight_color="0000FF",
+            font="Bangers",
+            font_size=28,
+            border_style=1,
+            outline=1,
+            shadow=1,
+            #Alignment=5,
+        )
+
         warnings.filterwarnings("default")
 
-        with open(srt_path, "w", encoding="utf-8") as srt:
-            write_srt(result["segments"], file=srt)
+        # with open(srt_file, "w", encoding="utf-8") as srt:
+        #     write_srt(result["segments"], file=srt)
 
-        subtitles_path[path] = srt_path
+        subtitles_path[path] = ass_file
 
     return subtitles_path
 
