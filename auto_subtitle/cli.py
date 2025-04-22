@@ -7,6 +7,7 @@ import tempfile
 import torch
 import openai
 from .utils import filename, str2bool, write_srt
+from .emoji import add_emoji_overlays
 
 
 def main():
@@ -48,6 +49,8 @@ def main():
         args["language"] = language
         
     model = stable_whisper.load_model(model_name)
+
+    
     audios = get_audio(args.pop("video"))
     subtitles = get_subtitles(
         audios, output_srt or srt_only, output_dir, model
@@ -71,6 +74,16 @@ def main():
         ).output(out_path, vcodec="h264_videotoolbox").run(quiet=True, overwrite_output=True)
 
         print(f"Saved subtitled video to {os.path.abspath(out_path)}.")
+
+        # Add animated emoji overlays if highlight JSON exists
+        highlight_json = os.path.join(output_dir, f"{filename(path)}.highlights.json")
+        if os.path.exists(highlight_json):
+            emoji_output_path = os.path.join(output_dir, f"{filename(path)}_emoji.mp4")
+            print(f"Adding emoji overlays to {filename(path)}...")
+            add_emoji_overlays(out_path, highlight_json, emoji_output_path)
+            print(f"✅ Saved emoji video to {emoji_output_path}")
+        else:
+            print(f"⚠️ No highlight JSON found for {filename(path)} — skipping emoji overlay.")
 
 def modify_subtitles(subtitles, output_srt, output_dir):
 
@@ -190,7 +203,7 @@ def get_subtitles(audio_paths: list, output_srt: bool, output_dir: str, model: s
             border_style=1,
             outline=1,
             shadow=1,
-            #Alignment=5,
+            Alignment=5,
         )
 
         warnings.filterwarnings("default")
