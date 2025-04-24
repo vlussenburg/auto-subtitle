@@ -6,3 +6,4 @@ torchvision
 ffmpeg-python
 openai
 moviepy
+pyobjc

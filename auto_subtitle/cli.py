@@ -51,12 +51,16 @@ def main():
     model = stable_whisper.load_model(model_name)
 
     
-    audios = get_audio(args.pop("video"))
-    subtitles = get_subtitles(
-        audios, output_srt or srt_only, output_dir, model
-    )
+    # audios = get_audio(args.pop("video"))
+    # subtitles = get_subtitles(
+    #     audios, output_srt or srt_only, output_dir, model
+    # )
+
+    subtitles = {"highlight_1.mp4": "subtitled/highlight_1.ass"}
 
     #modified_subtitles = modify_subtitles(subtitles, output_srt, output_dir)
+
+    
 
     if srt_only:
         return
@@ -69,9 +73,9 @@ def main():
         video = ffmpeg.input(path)
         audio = video.audio
 
-        ffmpeg.concat(
-            video.filter('subtitles', ass_path), audio, v=1, a=1
-        ).output(out_path, vcodec="h264_videotoolbox").run(quiet=True, overwrite_output=True)
+        # ffmpeg.concat(
+        #     video.filter('subtitles', ass_path), audio, v=1, a=1
+        # ).output(out_path, vcodec="h264_videotoolbox").run(quiet=True, overwrite_output=True)
 
         print(f"Saved subtitled video to {os.path.abspath(out_path)}.")
 
