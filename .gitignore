@@ -4,3 +4,9 @@ dist
 auto_subtitle/__pycache__
 build
 venv/
+subtitled/
+work/
+apple_emojis/
+*.mp4
+*.wav
+*.mov
