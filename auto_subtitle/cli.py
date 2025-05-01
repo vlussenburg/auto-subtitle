@@ -1,6 +1,7 @@
 import os
 import argparse
 import openai
+import tempfile
 from .utils import filename, str2bool, generate_whisperx_json, get_audio
 from .emoji import compose_video_with_overlays
 
