@@ -1,5 +1,4 @@
-openai-whisper
-stable-ts
+whisperx
 torch
 torchaudio
 torchvision

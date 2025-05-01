@@ -3,10 +3,11 @@ import json
 import numpy as np
 import random
 from PIL import Image, ImageDraw, ImageFont
-from moviepy import VideoFileClip, ImageClip, CompositeVideoClip
+from moviepy import VideoFileClip, ImageClip, TextClip, CompositeVideoClip
 
 FONT_PATH = "/System/Library/Fonts/Apple Color Emoji.ttc"
 EMOJI_RENDER_DIR = "apple_emojis"
+SUBTITLE_FONT = "Bangers"
 os.makedirs(EMOJI_RENDER_DIR, exist_ok=True)
 
 def emoji_to_filename(emoji):
@@ -19,27 +20,33 @@ def render_emoji_to_png(emoji, path, size=96):
     draw.text((0, 0), emoji, font=font, embedded_color=True)
     image.save(path)
 
-def add_emoji_overlays(video_path, highlight_json, output_path):
+def build_emoji_overlays(video_clip, whisperx_json_path):
     overlays = []
-    video = VideoFileClip(video_path)
+    with open(whisperx_json_path, 'r') as f:
+        data = json.load(f)
 
-    with open(highlight_json, 'r') as f:
-        highlights = json.load(f)
+    highlights = data.get("highlights", []) if "highlights" in data else []
 
-    clip_start = highlights[0]["start_time"]
+    if not highlights:
+        print("⚠️ No highlights found for emoji overlays.")
+        return overlays
 
-    effect_index = 0
     effect_cycle = [
-        lambda t: ("center", 200 + 20 * np.sin(2 * np.pi * t)),  # bounce
-        lambda t: ("center", 200 + 5 * np.sin(20 * np.pi * t)),  # jitter
-        lambda t: ("center", 200 + 40 * np.exp(-3 * t) * np.sin(10 * np.pi * t)),  # spring
-        lambda t: (100 + 300 * t, 150),                          # left to right
+        lambda t: ("center", 200 + 20 * np.sin(2 * np.pi * t)),
+        lambda t: ("center", 200 + 5 * np.sin(20 * np.pi * t)),
+        lambda t: ("center", 200 + 40 * np.exp(-3 * t) * np.sin(10 * np.pi * t)),
+        lambda t: (100 + 300 * t, 150),
     ]
     random.shuffle(effect_cycle)
+
+    effect_index = 0
 
     for highlight in highlights:
         for e in highlight.get("emojis", []):
             emoji = e["emoji"]
+            start = e["start_time"]
+            end = e["end_time"]
+
             filename = emoji_to_filename(emoji)
             emoji_path = os.path.join(EMOJI_RENDER_DIR, filename)
 
@@ -47,14 +54,8 @@ def add_emoji_overlays(video_path, highlight_json, output_path):
                 print(f"🎨 Rendering {emoji} to {emoji_path}")
                 render_emoji_to_png(emoji, emoji_path)
 
-            start = e["start_time"] - clip_start + 2
-            end = e["end_time"] - clip_start + 2
-
             fx = effect_cycle[effect_index]
-            effect_index += 1
-            if effect_index >= len(effect_cycle):
-                effect_index = 0
-                random.shuffle(effect_cycle)
+            effect_index = (effect_index + 1) % len(effect_cycle)
 
             emoji_clip = (ImageClip(emoji_path)
                           .with_start(start)
@@ -62,5 +63,51 @@ def add_emoji_overlays(video_path, highlight_json, output_path):
                           .with_position(fx))
             overlays.append(emoji_clip)
 
-    final = CompositeVideoClip([video] + overlays)
-    final.write_videofile(output_path, codec="h264_videotoolbox", audio_codec="aac", preset="ultrafast")
+    return overlays
+
+def build_subtitle_overlays(video_clip, whisperx_json_path):
+    subtitles = []
+    with open(whisperx_json_path, 'r') as f:
+        data = json.load(f)
+
+    segments = data.get("segments", [])
+
+    if not segments:
+        print("⚠️ No segments found for subtitles.")
+        return subtitles
+
+    for segment in segments:
+        for word_info in segment.get("words", []):
+            word = word_info["word"]
+            start = word_info["start"]
+            end = word_info["end"]
+
+            print(word, start, end)
+
+            word_clip = (TextClip(text=word, 
+                                  font="Arial", 
+                                  method='caption', 
+                                  size=(96, 96),
+                                  horizontal_align="center",
+                                  vertical_align="center")
+                         .with_start(start)
+                         .with_end(end)
+                         .with_color("white")
+                         .with_stroke_color("red")
+                         .with_stroke_width(2)
+                         .with_position(("center", "center"))
+                         )
+            subtitles.append(word_clip)
+            return subtitles
+
+    return subtitles
+
+def compose_video_with_overlays(video_path, whisperx_json_path, output_path):
+    video_clip = VideoFileClip(video_path)
+    video_clip = video_clip.with_subclip(0, 5);
+
+    emoji_clips = build_emoji_overlays(video_clip, whisperx_json_path)
+    subtitle_clips = build_subtitle_overlays(video_clip, whisperx_json_path)
+
+    final = CompositeVideoClip([video_clip] + emoji_clips + subtitle_clips)
+    final.write_videofile(output_path + "out.mp4", codec="h264_videotoolbox", audio_codec="aac", preset="ultrafast")

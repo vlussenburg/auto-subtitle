@@ -1,20 +1,15 @@
 import os
-import ffmpeg
-import stable_whisper
 import argparse
-import warnings
-import tempfile
-import torch
 import openai
-from .utils import filename, str2bool, write_srt
-from .emoji import add_emoji_overlays
+from .utils import filename, str2bool, generate_whisperx_json, get_audio
+from .emoji import compose_video_with_overlays
 
 
 def main():
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("video", nargs="+", type=str,
-                        help="paths to video files to transcribe")
+    parser.add_argument("video", type=str,
+                        help="path to video files to transcribe")
     parser.add_argument("--model", default="small",
                         help="name of the Whisper model to use")
     parser.add_argument("--output_dir", "-o", type=str,
@@ -39,55 +34,43 @@ def main():
     language: str = args.pop("language")
     
     os.makedirs(output_dir, exist_ok=True)
+    os.makedirs("work", exist_ok=True)
 
-    if model_name.endswith(".en"):
-        warnings.warn(
-            f"{model_name} is an English-only model, forcing English detection.")
-        args["language"] = "en"
-    # if translate task used and language argument is set, then use it
-    elif language != "auto":
-        args["language"] = language
+    # if model_name.endswith(".en"):
+    #     warnings.warn(
+    #         f"{model_name} is an English-only model, forcing English detection.")
+    #     args["language"] = "en"
+    # # if translate task used and language argument is set, then use it
+    # elif language != "auto":
+    #     args["language"] = language
         
-    model = stable_whisper.load_model(model_name)
-
-    
-    # audios = get_audio(args.pop("video"))
-    # subtitles = get_subtitles(
-    #     audios, output_srt or srt_only, output_dir, model
-    # )
-
-    subtitles = {"highlight_1.mp4": "subtitled/highlight_1.ass"}
+    # model = stable_whisper.load_model(model_name)
+    video_path = args.pop("video")
+    audio_path = get_audio(video_path, "work")
+    whisperx_json_path = generate_whisperx_json(audio_path, "work")
 
     #modified_subtitles = modify_subtitles(subtitles, output_srt, output_dir)
 
-    
+    # for path, ass_path in subtitles.items():
+    #     out_path = os.path.join(output_dir, f"{filename(path)}.mp4")
 
-    if srt_only:
-        return
+    #     print(f"Adding subtitles to {filename(path)}...")
 
-    for path, ass_path in subtitles.items():
-        out_path = os.path.join(output_dir, f"{filename(path)}.mp4")
+    #     video = ffmpeg.input(path)
+    #     audio = video.audio
 
-        print(f"Adding subtitles to {filename(path)}...")
+    #     ffmpeg.concat(
+    #         video.filter('subtitles', ass_path), audio, v=1, a=1
+    #     ).output(out_path, vcodec="h264_videotoolbox").run(quiet=True, overwrite_output=True)
 
-        video = ffmpeg.input(path)
-        audio = video.audio
+    #     print(f"Saved subtitled video to {os.path.abspath(out_path)}.")
 
-        # ffmpeg.concat(
-        #     video.filter('subtitles', ass_path), audio, v=1, a=1
-        # ).output(out_path, vcodec="h264_videotoolbox").run(quiet=True, overwrite_output=True)
+    #     # Add animated emoji overlays if highlight JSON exists
 
-        print(f"Saved subtitled video to {os.path.abspath(out_path)}.")
-
-        # Add animated emoji overlays if highlight JSON exists
-        highlight_json = os.path.join(output_dir, f"{filename(path)}.highlights.json")
-        if os.path.exists(highlight_json):
-            emoji_output_path = os.path.join(output_dir, f"{filename(path)}_emoji.mp4")
-            print(f"Adding emoji overlays to {filename(path)}...")
-            add_emoji_overlays(out_path, highlight_json, emoji_output_path)
-            print(f"✅ Saved emoji video to {emoji_output_path}")
-        else:
-            print(f"⚠️ No highlight JSON found for {filename(path)} — skipping emoji overlay.")
+    #     emoji_output_path = os.path.join(output_dir, f"{filename(path)}_emoji.mp4")
+    #     print(f"Adding emoji overlays to {filename(path)}...")
+    compose_video_with_overlays(video_path, whisperx_json_path, "subitled")
+    #     print(f"✅ Saved emoji video to {emoji_output_path}")
 
 def modify_subtitles(subtitles, output_srt, output_dir):
 
@@ -154,71 +137,51 @@ def modify_subtitles(subtitles, output_srt, output_dir):
 
     return modified_subtitles
 
-def get_audio(paths):
-    temp_dir = tempfile.gettempdir()
+# def get_subtitles(audio_paths: list, output_srt: bool, output_dir: str, model: stable_whisper):
+#     subtitles_path = {}
 
-    audio_paths = {}
-
-    for path in paths:
-        print(f"Extracting audio from {filename(path)}...")
-        output_path = os.path.join(temp_dir, f"{filename(path)}.wav")
-
-        ffmpeg.input(path).output(
-            output_path,
-            acodec="pcm_s16le", ac=1, ar="16k"
-        ).run(quiet=True, overwrite_output=True)
-
-        audio_paths[path] = output_path
-
-    return audio_paths
-
-
-def get_subtitles(audio_paths: list, output_srt: bool, output_dir: str, model: stable_whisper):
-    subtitles_path = {}
-
-    for path, audio_path in audio_paths.items():
-        srt_path = output_dir if output_srt else tempfile.gettempdir()
-        #srt_file = os.path.join(srt_path, f"{filename(path)}.srt")
-        ass_file = os.path.join(srt_path, f"{filename(path)}.ass")
+#     for path, audio_path in audio_paths.items():
+#         srt_path = output_dir if output_srt else tempfile.gettempdir()
+#         #srt_file = os.path.join(srt_path, f"{filename(path)}.srt")
+#         ass_file = os.path.join(srt_path, f"{filename(path)}.ass")
         
-        print(
-            f"Generating subtitles for {filename(path)}... This might take a while."
-        )
+#         print(
+#             f"Generating subtitles for {filename(path)}... This might take a while."
+#         )
 
-        warnings.filterwarnings("ignore")
-        transcribe = model.transcribe(audio_path, regroup=True, fp16=torch.cuda.is_available())
+#         warnings.filterwarnings("ignore")
+#         transcribe = model.transcribe(audio_path, regroup=True, fp16=torch.cuda.is_available())
 
-        # **Split subtitles naturally for TikTok style**
-        transcribe.split_by_gap(0.5)  # Split when there's a 0.5s silence
-        transcribe.split_by_length(max_words=3)
-        #transcribe.merge_by_gap(0.2, max_words=2)
+#         # **Split subtitles naturally for TikTok style**
+#         transcribe.split_by_gap(0.5)  # Split when there's a 0.5s silence
+#         transcribe.split_by_length(max_words=1)
+#         #transcribe.merge_by_gap(0.2, max_words=2)
 
-        #transcribe.to_srt_vtt(str(srt_file), word_level=True)
+#         #transcribe.to_srt_vtt(str(srt_file), word_level=True)
         
-        # Save the SSA file with styling
-        transcribe.to_ass(
-            ass_file,
-            word_level=True,
-            primary_color="FFFFFF",
-            secondary_color="FFFFFF",
-            highlight_color="0000FF",
-            font="Bangers",
-            font_size=28,
-            border_style=1,
-            outline=1,
-            shadow=1,
-            Alignment=5,
-        )
+#         # Save the SSA file with styling
+#         transcribe.to_ass(
+#             ass_file,
+#             word_level=True,
+#             primary_color="FFFFFF",
+#             secondary_color="FFFFFF",
+#             highlight_color="0000FF",
+#             font="Bangers",
+#             font_size=28,
+#             border_style=1,
+#             outline=1,
+#             shadow=1,
+#             Alignment=5,
+#         )
 
-        warnings.filterwarnings("default")
+#         warnings.filterwarnings("default")
 
-        # with open(srt_file, "w", encoding="utf-8") as srt:
-        #     write_srt(result["segments"], file=srt)
+#         # with open(srt_file, "w", encoding="utf-8") as srt:
+#         #     write_srt(result["segments"], file=srt)
 
-        subtitles_path[path] = ass_file
+#         subtitles_path[path] = ass_file
 
-    return subtitles_path
-
+#     return subtitles_path
 
 if __name__ == '__main__':
     main()

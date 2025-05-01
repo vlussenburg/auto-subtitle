@@ -1,6 +1,50 @@
+import ffmpeg
+import whisperx
+import torch
+import json
+import tempfile
 import os
 from typing import Iterator, TextIO
 
+def get_audio(path, output_path=tempfile.gettempdir()):
+    print(f"Extracting audio from {filename(path)}...")
+    output_file = os.path.join(output_path, f"{filename(path)}.wav")
+
+    if os.path.exists(output_file):
+        print(f"Audio already extracted at {output_file}, reusing it.")
+        return output_file
+
+    ffmpeg.input(path).output(
+        output_file,
+        acodec="pcm_s16le", ac=1, ar="16k"
+    ).run(quiet=True, overwrite_output=True)
+
+    return output_file
+
+def generate_whisperx_json(audio_path, output_json_path="work", model_size="small.en"):
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    output_file = os.path.join(output_json_path, f"{filename(audio_path)}.json")
+    if os.path.exists(output_file):
+        print(f"WhisperX JSON already exists at {output_file}, reusing it.")
+        return output_file
+
+    print(f"Loading WhisperX model {model_size} on {device}...")
+    model = whisperx.load_model(model_size, device=device, compute_type="float32")
+
+    print(f"Transcribing {audio_path}...")
+    result = model.transcribe(audio_path)
+
+    print("Aligning words for word-level timestamps...")
+    alignment_model, metadata = whisperx.load_align_model(language_code="en", device=device)
+    aligned_result = whisperx.align(result["segments"], alignment_model, metadata, audio_path, device=device)
+
+    print(f"Saving aligned output to {output_file}...")
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(aligned_result, f, ensure_ascii=False, indent=2)
+
+    print("✅ WhisperX JSON generated successfully.")
+    return output_file
 
 def str2bool(string):
     string = string.lower()
