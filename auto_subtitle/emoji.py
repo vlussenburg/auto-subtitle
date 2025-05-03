@@ -81,33 +81,50 @@ def build_subtitle_overlays(video_clip, whisperx_json_path):
             word = word_info["word"]
             start = word_info["start"]
             end = word_info["end"]
+            
+            safe_y_ratio = 0.78  # visually safe from UI
 
-            print(word, start, end)
-
-            word_clip = (TextClip(text=word, 
-                                  font="Arial", 
+            safe_width_ratio = 0.9
+            safe_height_ratio = 0.08
+            
+            word_clip = TextClip(text=word, 
+                                  font="./Bangers-Regular.ttf", 
                                   method='caption', 
-                                  size=(96, 96),
+                                  size=(int(video_clip.w * safe_width_ratio), int(video_clip.h * safe_height_ratio)),
                                   horizontal_align="center",
-                                  vertical_align="center")
-                         .with_start(start)
-                         .with_end(end)
-                         .with_color("white")
-                         .with_stroke_color("red")
-                         .with_stroke_width(2)
-                         .with_position(("center", "center"))
-                         )
+                                  vertical_align="center",
+                                  stroke_color="black",
+                                  stroke_width=4,
+                                  color="white")
+
+            word_clip = word_clip.with_start(start)
+            word_clip = word_clip.with_end(end)
+
+            # Convert Y-ratio to pixel position
+            y_position = int(video_clip.h * safe_y_ratio)
+            word_clip = word_clip.with_position(("center", y_position))
+
             subtitles.append(word_clip)
-            return subtitles
+            # if subtitles.__len__() > 5:
+            #     return subtitles
 
     return subtitles
 
 def compose_video_with_overlays(video_path, whisperx_json_path, output_path):
     video_clip = VideoFileClip(video_path)
-    video_clip = video_clip.with_subclip(0, 5);
+    #video_clip = video_clip.with_subclip(0, 5);
 
     emoji_clips = build_emoji_overlays(video_clip, whisperx_json_path)
     subtitle_clips = build_subtitle_overlays(video_clip, whisperx_json_path)
 
     final = CompositeVideoClip([video_clip] + emoji_clips + subtitle_clips)
-    final.write_videofile(output_path + "out.mp4", codec="h264_videotoolbox", audio_codec="aac", preset="ultrafast")
+    dev_mode = True
+
+    final.write_videofile(
+        output_path + "out.mp4",
+        codec="libx264" if dev_mode else "h264_videotoolbox",
+        audio_codec="aac",
+        preset="ultrafast" if dev_mode else "medium",
+        fps=12 if dev_mode else 30,
+        threads=4
+    )
