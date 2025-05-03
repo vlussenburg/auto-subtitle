@@ -3,7 +3,7 @@ dist
 *.egg-info
 auto_subtitle/__pycache__
 build
-venv/
+.venv/
 subtitled/
 work/
 apple_emojis/

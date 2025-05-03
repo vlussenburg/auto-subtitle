@@ -37,44 +37,13 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs("work", exist_ok=True)
 
-    # if model_name.endswith(".en"):
-    #     warnings.warn(
-    #         f"{model_name} is an English-only model, forcing English detection.")
-    #     args["language"] = "en"
-    # # if translate task used and language argument is set, then use it
-    # elif language != "auto":
-    #     args["language"] = language
-        
-    # model = stable_whisper.load_model(model_name)
     video_path = args.pop("video")
     audio_path = get_audio(video_path, "work")
     whisperx_json_path = generate_whisperx_json(audio_path, "work")
 
-    #modified_subtitles = modify_subtitles(subtitles, output_srt, output_dir)
-
-    # for path, ass_path in subtitles.items():
-    #     out_path = os.path.join(output_dir, f"{filename(path)}.mp4")
-
-    #     print(f"Adding subtitles to {filename(path)}...")
-
-    #     video = ffmpeg.input(path)
-    #     audio = video.audio
-
-    #     ffmpeg.concat(
-    #         video.filter('subtitles', ass_path), audio, v=1, a=1
-    #     ).output(out_path, vcodec="h264_videotoolbox").run(quiet=True, overwrite_output=True)
-
-    #     print(f"Saved subtitled video to {os.path.abspath(out_path)}.")
-
-    #     # Add animated emoji overlays if highlight JSON exists
-
-    #     emoji_output_path = os.path.join(output_dir, f"{filename(path)}_emoji.mp4")
-    #     print(f"Adding emoji overlays to {filename(path)}...")
-    compose_video_with_overlays(video_path, whisperx_json_path, "subitled")
-    #     print(f"✅ Saved emoji video to {emoji_output_path}")
+    compose_video_with_overlays(video_path, whisperx_json_path, "subtitled")
 
 def modify_subtitles(subtitles, output_srt, output_dir):
-
     client = openai.OpenAI(api_key="")
     modified_subtitles = {}
     srt_path = output_dir if output_srt else tempfile.gettempdir()
@@ -137,52 +106,6 @@ def modify_subtitles(subtitles, output_srt, output_dir):
             modified_subtitles[path] = out_file
 
     return modified_subtitles
-
-# def get_subtitles(audio_paths: list, output_srt: bool, output_dir: str, model: stable_whisper):
-#     subtitles_path = {}
-
-#     for path, audio_path in audio_paths.items():
-#         srt_path = output_dir if output_srt else tempfile.gettempdir()
-#         #srt_file = os.path.join(srt_path, f"{filename(path)}.srt")
-#         ass_file = os.path.join(srt_path, f"{filename(path)}.ass")
-        
-#         print(
-#             f"Generating subtitles for {filename(path)}... This might take a while."
-#         )
-
-#         warnings.filterwarnings("ignore")
-#         transcribe = model.transcribe(audio_path, regroup=True, fp16=torch.cuda.is_available())
-
-#         # **Split subtitles naturally for TikTok style**
-#         transcribe.split_by_gap(0.5)  # Split when there's a 0.5s silence
-#         transcribe.split_by_length(max_words=1)
-#         #transcribe.merge_by_gap(0.2, max_words=2)
-
-#         #transcribe.to_srt_vtt(str(srt_file), word_level=True)
-        
-#         # Save the SSA file with styling
-#         transcribe.to_ass(
-#             ass_file,
-#             word_level=True,
-#             primary_color="FFFFFF",
-#             secondary_color="FFFFFF",
-#             highlight_color="0000FF",
-#             font="Bangers",
-#             font_size=28,
-#             border_style=1,
-#             outline=1,
-#             shadow=1,
-#             Alignment=5,
-#         )
-
-#         warnings.filterwarnings("default")
-
-#         # with open(srt_file, "w", encoding="utf-8") as srt:
-#         #     write_srt(result["segments"], file=srt)
-
-#         subtitles_path[path] = ass_file
-
-#     return subtitles_path
 
 if __name__ == '__main__':
     main()
