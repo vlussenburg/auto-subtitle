@@ -7,6 +7,8 @@ from moviepy import VideoFileClip, ImageClip, TextClip, CompositeVideoClip
 
 import json
 
+EMOJI_SIZE = 128
+
 def load_inverted_emoji_index(path="external/emojis.json"):
     with open(path) as f:
         raw = json.load(f)
@@ -32,42 +34,62 @@ os.makedirs(EMOJI_RENDER_DIR, exist_ok=True)
 def emoji_to_filename(emoji):
     return '-'.join(f"{ord(c):x}" for c in emoji) + ".png"
 
-def render_emoji_to_png(emoji, path, size=96):
+def render_emoji_to_png(emoji, path, size=EMOJI_SIZE):
     font = ImageFont.truetype(FONT_PATH, size, encoding='unic')
     image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
     draw.text((0, 0), emoji, font=font, embedded_color=True)
     image.save(path)
 
-def get_emoji_overlay(word, start, end, y_position):
+def get_emoji_overlay(video_width, word, start, end, y_position):
+    center_x = (video_width // 2) - (EMOJI_SIZE // 2)
+    effect_cycle = [
+        # Smooth vertical bounce (3Hz)
+        {
+            "position": lambda t: ("center", y_position + 20 * np.sin(6 * np.pi * t)),
+            "scale": lambda t: 1.0
+        },
+        # Zoom in
+        {
+            "position": lambda t: (center_x, y_position),
+            "scale": lambda t: 0.5 + 0.5 * t
+        },
+        # Springy decay bounce (damped sine wave)
+        {
+            "position": lambda t: ("center", y_position + 40 * np.exp(-1.5 * t) * np.sin(6 * np.pi * t)),
+            "scale": lambda t: 1.0
+        },
+        # Pop bounce
+        {
+            "position": lambda t: (center_x, y_position),
+            "scale": lambda t: 1.0 + 0.3 * np.exp(-4 * t) * np.sin(10 * np.pi * t)
+        },
+        # Slide in from left
+        {
+            "position": lambda t: (int(video_width * 0.1) + int(video_width * 0.5 * t), y_position),
+            "scale": lambda t: 1.0
+        },
+    ]
+    
     emojis = get_emojis_for_word(word.lower())
     if not emojis:
         return None
-    
-    effect_cycle = [
-        lambda t: ("center", y_position + 20 * np.sin(2 * np.pi * t)),
-        lambda t: ("center", y_position + 5 * np.sin(20 * np.pi * t)),
-        lambda t: ("center", y_position + 40 * np.exp(-3 * t) * np.sin(10 * np.pi * t)),
-        lambda t: (100 + 300 * t, y_position),
-    ]
-    random.shuffle(effect_cycle)
-
-    effect_index = 0 
-    fx = effect_cycle[effect_index]
-    effect_index = (effect_index + 1) % len(effect_cycle)
 
     emoji = random.choice(emojis)
     emoji_path = path_to_emoji(emoji)
+    fx = random.choice(effect_cycle)
 
     emoji_clip = (ImageClip(emoji_path)
                     .with_start(start)
                     .with_end(end)
-                    .with_position(fx))
+                    .with_position(fx["position"])
+                    .resized(fx["scale"]))
 
+    print(emoji, fx)
     return emoji_clip
 
-def build_subtitle_overlays(video_clip, whisperx_json_path):
-    subtitles = []
+def build_overlays(video_clip, whisperx_json_path):
+    overlays = []
     with open(whisperx_json_path, 'r') as f:
         data = json.load(f)
 
@@ -75,7 +97,7 @@ def build_subtitle_overlays(video_clip, whisperx_json_path):
 
     if not segments:
         print("⚠️ No segments found for subtitles.")
-        return subtitles
+        return overlays
     
     for segment in segments:
         for word_info in segment.get("words", []):
@@ -106,15 +128,15 @@ def build_subtitle_overlays(video_clip, whisperx_json_path):
             y_position = int(video_clip.h * safe_y_ratio)
             word_clip = word_clip.with_position(("center", y_position))
 
-            subtitles.append(word_clip)
+            overlays.append(word_clip)
+            
+            emoji_end = max(end, start + 1)
+            emoji_y_position = y_position - caption_height
+            emoji_overlay = get_emoji_overlay(video_clip.w, word.lower(), start, emoji_end, emoji_y_position)
+            if emoji_overlay:
+                overlays.append(emoji_overlay)
 
-            overlay = get_emoji_overlay(word.lower(), start, end, y_position - caption_height)
-            if overlay:
-                subtitles.append(overlay)            
-            # if subtitles.__len__() > 5:
-            #     return subtitles
-
-    return subtitles
+    return overlays
 
 def path_to_emoji(emoji):
     emoji_path = os.path.join(EMOJI_RENDER_DIR, emoji_to_filename(emoji))
@@ -127,10 +149,10 @@ def compose_video_with_overlays(video_path, whisperx_json_path, output_path):
     #video_clip = video_clip.with_subclip(0, 5);
 
     #emoji_clips = build_emoji_overlays(video_clip, whisperx_json_path)
-    subtitle_clips = build_subtitle_overlays(video_clip, whisperx_json_path)
+    subtitle_clips = build_overlays(video_clip, whisperx_json_path)
 
     final = CompositeVideoClip([video_clip] + subtitle_clips)
-    dev_mode = False
+    dev_mode = True
 
     final.write_videofile(
         output_path + "/out.mp4",
