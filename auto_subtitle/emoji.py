@@ -4,7 +4,8 @@ import numpy as np
 import random
 from PIL import Image, ImageDraw, ImageFont
 from moviepy import VideoFileClip, ImageClip, TextClip, CompositeVideoClip
-
+from slugify import slugify
+from .utils import *
 import json
 
 EMOJI_SIZE = 128
@@ -87,6 +88,24 @@ def get_emoji_overlay(video_width, word, start, end, y_position):
 
     print(emoji, fx)
     return emoji_clip
+    
+def generate_b_roll_overlay(image_path, start, end, video_size):
+    duration = end - start
+    zoom_start = 1.0
+    zoom_end = 1.1
+
+    def zoom(t):
+        return zoom_start + (zoom_end - zoom_start) * (t / duration)
+
+    return (
+        ImageClip(image_path)
+        .with_start(start)
+        .with_end(end)
+        .resized(lambda t: zoom(t))
+        .cropped(x1=(1024 - video_size[0]) // 2, width=video_size[0])
+        .with_position((0, 0))  # anchor top-left to fill the frame
+        .with_opacity(0.95)
+    )
 
 def build_overlays(video_clip, whisperx_json_path):
     overlays = []
@@ -94,10 +113,23 @@ def build_overlays(video_clip, whisperx_json_path):
         data = json.load(f)
 
     segments = data.get("segments", [])
-
+    
     if not segments:
         print("⚠️ No segments found for subtitles.")
         return overlays
+
+    for segment in segments:
+        if segment.get("b_roll_score", 0) < 6:
+            continue
+        
+        start = segment.get("start", 0)
+        end = segment.get("end", 0)
+        image_path = "broll_images/" + slugify(segment["text"][:10]) + ".png"
+        if not os.path.exists(image_path):
+            generate_b_roll_image(segment["text"], image_path)
+
+        if os.path.exists(image_path):
+            overlays.append(generate_b_roll_overlay(image_path, start, end, (video_clip.w, video_clip.h)))
     
     for segment in segments:
         for word_info in segment.get("words", []):

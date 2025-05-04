@@ -6,3 +6,7 @@ ffmpeg-python
 openai
 moviepy
 pyobjc
+python-dotenv
+requests
+python-slugify
+slugify

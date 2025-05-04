@@ -3,8 +3,12 @@ import whisperx
 import torch
 import json
 import tempfile
+from openai import OpenAI
 import os
+import requests
 from typing import Iterator, TextIO
+
+client = OpenAI()
 
 def get_audio(path, output_path=tempfile.gettempdir()):
     print(f"Extracting audio from {filename(path)}...")
@@ -38,6 +42,9 @@ def generate_whisperx_json(audio_path, output_json_path="work", model_size="smal
     print("Aligning words for word-level timestamps...")
     alignment_model, metadata = whisperx.load_align_model(language_code="en", device=device)
     aligned_result = whisperx.align(result["segments"], alignment_model, metadata, audio_path, device=device)
+    
+    for segment in aligned_result["segments"]:
+        is_broll_suitable(segment["text"], json_segment=segment)
 
     print(f"Saving aligned output to {output_file}...")
     with open(output_file, "w", encoding="utf-8") as f:
@@ -85,3 +92,48 @@ def write_srt(transcript: Iterator[dict], file: TextIO):
 
 def filename(path):
     return os.path.splitext(os.path.basename(path))[0]
+
+def generate_b_roll_image(prompt: str, output_path: str):
+    try:
+        print(f"🎨 Generating B-roll for: {prompt[:80]}...")
+        response = client.images.generate(
+            model="dall-e-3",
+            prompt=prompt,
+            n=1,
+            size="1024x1024",
+            quality="standard",
+            response_format="url",
+        )
+        image_url = response.data[0].url
+        img_data = requests.get(image_url).content
+        with open(output_path, "wb") as f:
+            f.write(img_data)
+        print(f"✅ Saved B-roll to {output_path}")
+    except Exception as e:
+        print(f"❌ Failed to generate B-roll: {e}")
+
+def is_broll_suitable(prompt: str, threshold: int = 6, json_segment: dict = None) -> bool:
+    system_prompt = (
+        "You are a helpful assistant. Rate how visually suitable the following sentence is "
+        "for a single cinematic image, on a scale from 0 (not visual at all) to 10 (very visual). "
+        "Only return the number."
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": prompt}
+            ]
+        )
+        score_text = response.choices[0].message.content.strip()
+        score = int(score_text)
+
+        if json_segment is not None:
+            json_segment["b_roll_score"] = score
+
+        return score >= threshold
+    except Exception as e:
+        print(f"⚠️ Could not score B-roll suitability: {e}")
+        return False
