@@ -98,7 +98,7 @@ def generate_b_roll_image(prompt: str, output_path: str):
         print(f"🎨 Generating B-roll for: {prompt[:80]}...")
         response = client.images.generate(
             model="dall-e-3",
-            prompt=prompt,
+            prompt=f"An image for use as B-roll in a video, avoiding written text: {prompt}",
             n=1,
             size="1024x1024",
             quality="standard",

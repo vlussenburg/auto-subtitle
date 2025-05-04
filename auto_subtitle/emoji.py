@@ -8,7 +8,7 @@ from slugify import slugify
 from .utils import *
 import json
 
-EMOJI_SIZE = 128
+EMOJI_SIZE = 96
 
 def load_inverted_emoji_index(path="external/emojis.json"):
     with open(path) as f:
@@ -184,10 +184,11 @@ def compose_video_with_overlays(video_path, whisperx_json_path, output_path):
     subtitle_clips = build_overlays(video_clip, whisperx_json_path)
 
     final = CompositeVideoClip([video_clip] + subtitle_clips)
-    dev_mode = True
-
+    dev_mode = False
+    
+    output_file = os.path.join(output_path, f"{filename(video_path)}.mp4")
     final.write_videofile(
-        output_path + "/out.mp4",
+        output_file,
         codec="libx264" if dev_mode else "h264_videotoolbox",
         audio_codec="aac",
         preset="ultrafast" if dev_mode else "medium",
