@@ -10,3 +10,7 @@ apple_emojis/
 *.mp4
 *.wav
 *.mov
+external/
+.env
+.vscode/
+broll_images/
