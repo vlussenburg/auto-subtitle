@@ -9,8 +9,6 @@ from slugify import slugify
 from .utils import *
 import json
 
-EMOJI_SIZE = 96
-
 def load_inverted_emoji_index(path="external/emojis.json"):
     with open(path) as f:
         raw = json.load(f)
@@ -36,15 +34,22 @@ os.makedirs(EMOJI_RENDER_DIR, exist_ok=True)
 def emoji_to_filename(emoji):
     return '-'.join(f"{ord(c):x}" for c in emoji) + ".png"
 
-def render_emoji_to_png(emoji, path, size=EMOJI_SIZE):
+def render_emoji_to_png(emoji, video_clip, path):
+    size = get_emoji_size(video_clip)
     font = ImageFont.truetype(FONT_PATH, size, encoding='unic')
     image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
     draw.text((0, 0), emoji, font=font, embedded_color=True)
     image.save(path)
 
-def get_emoji_overlay(video_width, word, start, end, y_position):
-    center_x = (video_width // 2) - (EMOJI_SIZE // 2)
+def get_emoji_size(video_clip, scale=0.05):
+    preferred_sizes = [32, 64, 96, 160, 256]
+    target = video_clip.h * scale
+    size = min(preferred_sizes, key=lambda s: abs(s - target))
+    return size
+
+def get_emoji_overlay(video_clip, word, start, end, y_position):
+    center_x = (video_clip.h // 2) - (get_emoji_size(video_clip) // 2)
     effect_cycle = [
         # Smooth vertical bounce (3Hz)
         {
@@ -68,7 +73,7 @@ def get_emoji_overlay(video_width, word, start, end, y_position):
         },
         # Slide in from left
         {
-            "position": lambda t: (int(video_width * 0.1) + int(video_width * 0.5 * t), y_position),
+            "position": lambda t: (int(video_clip.w * 0.1) + int(video_clip.w * 0.5 * t), y_position),
             "scale": lambda t: 1.0
         },
     ]
@@ -78,7 +83,7 @@ def get_emoji_overlay(video_width, word, start, end, y_position):
         return None
 
     emoji = random.choice(emojis)
-    emoji_path = path_to_emoji(emoji)
+    emoji_path = path_to_emoji(emoji, video_clip)
     fx = random.choice(effect_cycle)
 
     emoji_clip = (ImageClip(emoji_path)
@@ -89,13 +94,23 @@ def get_emoji_overlay(video_width, word, start, end, y_position):
     return emoji_clip
     
 def generate_b_roll_overlay(image_path, start, end, video_size):
-    duration = min(end - start, 3)
+    duration = max(end - start, 3)
     img_clip = ImageClip(image_path, duration=duration)
     img_w, img_h = img_clip.size
-    vid_w, vid_h = video_size
+    target_w, target_h = video_size
+    
+    # Compute scale to cover frame, whether 9:16 or 16:9
+    target_aspect = target_w / target_h
+    img_aspect = img_w / img_h
+    
+    if img_aspect > target_aspect:
+        # Image is wider → scale based on height
+        scale_to_cover = target_h / img_h
+    else:
+        # Image is taller/narrower → scale based on width
+        scale_to_cover = target_w / img_w
 
     # Compute initial scale so the image is big enough for zooming
-    scale_to_cover = max(vid_w / img_w, vid_h / img_h)
     zoom_margin = 1.25
     base_scale = scale_to_cover * zoom_margin
 
@@ -158,7 +173,7 @@ def build_overlays(video_clip, whisperx_json_path):
             
             emoji_end = max(end, start + 1)
             emoji_y_position = y_position - caption_height
-            emoji_overlay = get_emoji_overlay(video_clip.w, word.lower(), start, emoji_end, emoji_y_position)
+            emoji_overlay = get_emoji_overlay(video_clip, word.lower(), start, emoji_end, emoji_y_position)
             if emoji_overlay:
                 overlays.append(emoji_overlay)
 
@@ -180,17 +195,18 @@ def find_broll_segment_and_generate_broll_overlay(video_clip, segments):
     for segment in top_segments:
         start = segment.get("start", 0)
         end = segment.get("end", 0)
-        image_path = "broll_images/" + slugify(segment["text"][:20]) + ".png"
+        aspect_str = "9x16" if is_vertical(video_clip) else "16x9"
+        image_path = "broll_images/" + slugify(segment["text"][:20]) + "_" + aspect_str + ".png"
         if not os.path.exists(image_path):
-            generate_b_roll_image(segment["text"], image_path)
+            generate_b_roll_image(segment["text"], image_path, is_vertical(video_clip))
 
         if os.path.exists(image_path):
             overlays.append(generate_b_roll_overlay(image_path, start, end, (video_clip.w, video_clip.h)))
 
     return overlays
 
-def path_to_emoji(emoji):
+def path_to_emoji(emoji, video_clip):
     emoji_path = os.path.join(EMOJI_RENDER_DIR, emoji_to_filename(emoji))
     if not os.path.exists(emoji_path):
-        render_emoji_to_png(emoji, emoji_path)
+        render_emoji_to_png(emoji, video_clip, emoji_path)
     return emoji_path

@@ -10,11 +10,13 @@ from typing import Iterator, TextIO
 
 client = OpenAI()
 
-def center_crop_to_9x16(clip):    
+def center_crop_to_aspect_ratio(clip, target_aspect):
+    if target_aspect not in {9/16, 16/9}:
+        raise ValueError("target_aspect must be either 9/16 or 16/9")
+    
     from moviepy.video.fx import Crop
     
     w, h = clip.size
-    target_aspect = 9 / 16
     current_aspect = w / h
 
     if current_aspect > target_aspect:
@@ -23,7 +25,7 @@ def center_crop_to_9x16(clip):
         x1 = (w - target_w) // 2
         return Crop(x1=x1, width=target_w).apply(clip)
     else:
-        # Already 9:16 or narrower → don't crop
+        # Already in target aspect ratio
         return clip
 
 def get_audio(path, output_path=tempfile.gettempdir()):
@@ -60,9 +62,9 @@ def generate_whisperx_json(audio_path, output_json_path="work", model_size="smal
     aligned_result = whisperx.align(result["segments"], alignment_model, metadata, audio_path, device=device)
     
     for segment in aligned_result["segments"]:
-        is_broll_suitable(segment["text"], json_segment=segment)
+        add_broll_score(segment["text"], json_segment=segment)
 
-    print(f"Saving aligned output to {output_file}...")
+    print(f"Saving augmented output to {output_file}...")
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(aligned_result, f, ensure_ascii=False, indent=2)
 
@@ -109,14 +111,18 @@ def write_srt(transcript: Iterator[dict], file: TextIO):
 def filename(path):
     return os.path.splitext(os.path.basename(path))[0]
 
-def generate_b_roll_image(prompt: str, output_path: str):
+def is_vertical(clip):
+    return clip.h > clip.w
+
+def generate_b_roll_image(prompt: str, output_path: str, vertical: bool = True):
     try:
         print(f"🎨 Generating B-roll for: {prompt[:80]}...")
+        orientation = "portrait" if vertical else "landscape"
         response = client.images.generate(
             model="dall-e-3",
-            prompt=f"An image for use as B-roll in a video, avoiding written text: {prompt}",
+            prompt=f"An image in {orientation} orientation for use as B-roll in a video for a channel focusing on serious content around mental health, philosophy and psychology, avoiding written text. If portraying humans or animals, make sure they are anotomically correct without extra or missing limbs. Prompt: {prompt}",
             n=1,
-            size="1024x1792",
+            size="1024x1792" if vertical else "1792x1024",
             quality="standard",
             response_format="url",
         )
@@ -128,7 +134,7 @@ def generate_b_roll_image(prompt: str, output_path: str):
     except Exception as e:
         print(f"❌ Failed to generate B-roll: {e}")
 
-def is_broll_suitable(prompt: str, threshold: int = 6, json_segment: dict = None) -> bool:
+def add_broll_score(prompt: str, json_segment: dict = None) -> bool:
     system_prompt = (
         "You are a helpful assistant. Rate how visually suitable the following sentence is "
         "for a single cinematic image, on a scale from 0 (not visual at all) to 10 (very visual). "
@@ -148,8 +154,6 @@ def is_broll_suitable(prompt: str, threshold: int = 6, json_segment: dict = None
 
         if json_segment is not None:
             json_segment["b_roll_score"] = score
-
-        return score >= threshold
     except Exception as e:
         print(f"⚠️ Could not score B-roll suitability: {e}")
         return False

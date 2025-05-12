@@ -1,11 +1,12 @@
 import os
 import argparse
-import openai
-import tempfile
-from .utils import filename, str2bool, generate_whisperx_json, get_audio, center_crop_to_9x16 
-from moviepy import VideoFileClip, ImageClip, TextClip, CompositeVideoClip, concatenate_videoclips
+from .utils import *
+from moviepy import VideoFileClip, CompositeVideoClip, concatenate_videoclips
 from .emoji import build_overlays
 from dotenv import load_dotenv
+
+OUTPUT_DIR = ""
+WORK_DIR = "work"
 
 def main():
     parser = argparse.ArgumentParser(
@@ -16,38 +17,40 @@ def main():
                         help="name of the Whisper model to use")
     parser.add_argument("--output_dir", "-o", type=str,
                         default="subtitled", help="directory to save the outputs")
-    parser.add_argument("--output_srt", type=str2bool, default=False,
-                        help="whether to output the .srt file along with the video files")
-    parser.add_argument("--srt_only", type=str2bool, default=False,
-                        help="only generate the .srt file and not create overlayed video")
     parser.add_argument("--verbose", type=str2bool, default=False,
                         help="whether to print out the progress and debug messages")
-
+    parser.add_argument("--skip-vertical", action="store_true",
+                        help="whether to skip output in 9x16 aspect ratio")
+    parser.add_argument("--skip-horizontal", action="store_true",
+                        help="whether to skip output in 16x9 aspect ratio")
     parser.add_argument("--task", type=str, default="transcribe", choices=[
                         "transcribe", "translate"], help="whether to perform X->X speech recognition ('transcribe') or X->English translation ('translate')")
-    parser.add_argument("--language", type=str, default="auto", choices=["auto","af","am","ar","as","az","ba","be","bg","bn","bo","br","bs","ca","cs","cy","da","de","el","en","es","et","eu","fa","fi","fo","fr","gl","gu","ha","haw","he","hi","hr","ht","hu","hy","id","is","it","ja","jw","ka","kk","km","kn","ko","la","lb","ln","lo","lt","lv","mg","mi","mk","ml","mn","mr","ms","mt","my","ne","nl","nn","no","oc","pa","pl","ps","pt","ro","ru","sa","sd","si","sk","sl","sn","so","sq","sr","su","sv","sw","ta","te","tg","th","tk","tl","tr","tt","uk","ur","uz","vi","yi","yo","zh"], 
-    help="What is the origin language of the video? If unset, it is detected automatically.")
 
     load_dotenv()
     
     args = parser.parse_args().__dict__
     model_name: str = args.pop("model")
-    output_dir: str = args.pop("output_dir")
-    output_srt: bool = args.pop("output_srt")
-    srt_only: bool = args.pop("srt_only")
-    language: str = args.pop("language")
+    OUTPUT_DIR = args.pop("output_dir")
+    skip_vertical: bool = args.pop("skip_vertical")
+    skip_horizontal: bool = args.pop("skip_horizontal")
     
-    os.makedirs(output_dir, exist_ok=True)
-    os.makedirs("work", exist_ok=True)
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(WORK_DIR, exist_ok=True)
 
     video_paths = args.pop("video")
+    if not skip_vertical:
+        augment_video(video_paths, 9/16)
+    if not skip_horizontal:
+        augment_video(video_paths, 16/9)
+
+def augment_video(video_paths, target_aspect):
     clips = []
     for idx, video_path in enumerate(video_paths):
         video_clip = VideoFileClip(video_path)
-        video_clip = center_crop_to_9x16(video_clip)
+        video_clip = center_crop_to_aspect_ratio(video_clip, target_aspect)
         
-        audio_path = get_audio(video_path, "work")
-        whisperx_json_path = generate_whisperx_json(audio_path, "work")
+        audio_path = get_audio(video_path, WORK_DIR)
+        whisperx_json_path = generate_whisperx_json(audio_path, WORK_DIR)
         subtitle_clips = build_overlays(video_clip, whisperx_json_path)
 
         clip = CompositeVideoClip([video_clip] + subtitle_clips)
@@ -55,22 +58,25 @@ def main():
         
     final = concatenate_videoclips(clips)
     
-    output_file = os.path.join(output_dir, f"{filename(video_path)}.mp4")
-    dev_mode = False
+    aspect_str = "9x16" if target_aspect == 9/16 else "16x9"
+    output_file = f"{filename(video_paths[-1])}_{aspect_str}.mp4"
+    dev_mode = True
     if dev_mode:
         final.write_videofile(
-            output_file,
+            os.path.join(OUTPUT_DIR, output_file),
             fps=12,
             bitrate="800k",         # Lower bitrate for faster rendering
             preset="ultrafast",     # ffmpeg preset (requires ffmpeg installed)
             audio_codec="aac",      # ensure audio is included
             codec="h264_videotoolbox",        # Use H.264 codec for video
+            ffmpeg_params=["-movflags", "+faststart"],
         )
     else:
         final.write_videofile(
-            output_file,
+            os.path.join(OUTPUT_DIR, output_file),
             fps=30,
-            audio_codec="aac"
+            audio_codec="aac",
+            ffmpeg_params=["-movflags", "+faststart"],
         )
 
 if __name__ == '__main__':
