@@ -4,6 +4,7 @@ from .utils import *
 from moviepy import VideoFileClip, CompositeVideoClip, concatenate_videoclips
 from .emoji import build_overlays
 from dotenv import load_dotenv
+from .face_tracking import track_face_centers
 
 OUTPUT_DIR = ""
 WORK_DIR = "work"
@@ -38,6 +39,7 @@ def main():
     os.makedirs(WORK_DIR, exist_ok=True)
     
     video_paths = args.pop("video")
+        
     if not skip_vertical:
         create_subtitled_video(video_paths, 9/16)
     if not skip_horizontal:
@@ -49,13 +51,17 @@ def create_subtitled_video(video_paths, target_aspect):
         video_clip = VideoFileClip(video_path)
         video_clip = center_crop_to_aspect_ratio(video_clip, target_aspect)
         
+        track_face_centers(video_path, work_dir=WORK_DIR)
+
         audio_path = get_audio(video_path, WORK_DIR)
-        whisperx_json_path = generate_whisperx_json(audio_path, WORK_DIR)
+        whisperx_json_path = generate_and_write_whisperx_json(audio_path, WORK_DIR)
+        
+        # Captions
         subtitle_clips = build_overlays(video_clip, whisperx_json_path)
 
         clip = CompositeVideoClip([video_clip] + subtitle_clips)
         clips.append(clip)
-        
+    
     final = concatenate_videoclips(clips)
     
     aspect_str = "9x16" if target_aspect == 9/16 else "16x9"

@@ -49,7 +49,7 @@ def get_emoji_size(video_clip, scale=0.05):
     return size
 
 def get_emoji_overlay(video_clip, word, start, end, y_position):
-    center_x = (video_clip.h // 2) - (get_emoji_size(video_clip) // 2)
+    center_x = (video_clip.w // 2) - (get_emoji_size(video_clip) // 2)
     effect_cycle = [
         # Smooth vertical bounce (3Hz)
         {

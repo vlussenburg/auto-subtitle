@@ -6,7 +6,7 @@ import tempfile
 from openai import OpenAI
 import os
 import requests
-from typing import Iterator, TextIO
+from typing import Iterator, TextIO 
 
 client = OpenAI()
 
@@ -43,7 +43,7 @@ def get_audio(path, output_path=tempfile.gettempdir()):
 
     return output_file
 
-def generate_whisperx_json(audio_path, output_json_path="work", model_size="small.en"):
+def generate_and_write_whisperx_json(audio_path, output_json_path="work", model_size="small.en"):
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     output_file = os.path.join(output_json_path, f"{filename(audio_path)}.json")

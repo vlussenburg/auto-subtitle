@@ -10,3 +10,8 @@ python-dotenv
 requests
 python-slugify
 slugify
+mediapipe
+opencv-python
+numpy
+scipy
+tqdm
