@@ -36,14 +36,14 @@ def main():
     
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     os.makedirs(WORK_DIR, exist_ok=True)
-
+    
     video_paths = args.pop("video")
     if not skip_vertical:
-        augment_video(video_paths, 9/16)
+        create_subtitled_video(video_paths, 9/16)
     if not skip_horizontal:
-        augment_video(video_paths, 16/9)
+        create_subtitled_video(video_paths, 16/9)
 
-def augment_video(video_paths, target_aspect):
+def create_subtitled_video(video_paths, target_aspect):
     clips = []
     for idx, video_path in enumerate(video_paths):
         video_clip = VideoFileClip(video_path)
