@@ -10,6 +10,22 @@ from typing import Iterator, TextIO
 
 client = OpenAI()
 
+def center_crop_to_9x16(clip):    
+    from moviepy.video.fx import Crop
+    
+    w, h = clip.size
+    target_aspect = 9 / 16
+    current_aspect = w / h
+
+    if current_aspect > target_aspect:
+        # Too wide → crop width
+        target_w = int(h * target_aspect)
+        x1 = (w - target_w) // 2
+        return Crop(x1=x1, width=target_w).apply(clip)
+    else:
+        # Already 9:16 or narrower → don't crop
+        return clip
+
 def get_audio(path, output_path=tempfile.gettempdir()):
     print(f"Extracting audio from {filename(path)}...")
     output_file = os.path.join(output_path, f"{filename(path)}.wav")
@@ -100,7 +116,7 @@ def generate_b_roll_image(prompt: str, output_path: str):
             model="dall-e-3",
             prompt=f"An image for use as B-roll in a video, avoiding written text: {prompt}",
             n=1,
-            size="1024x1024",
+            size="1024x1792",
             quality="standard",
             response_format="url",
         )

@@ -1,4 +1,5 @@
 import os
+import math
 import json
 import numpy as np
 import random
@@ -85,26 +86,29 @@ def get_emoji_overlay(video_width, word, start, end, y_position):
                     .with_end(end)
                     .with_position(fx["position"])
                     .resized(fx["scale"]))
-
-    print(emoji, fx)
     return emoji_clip
     
 def generate_b_roll_overlay(image_path, start, end, video_size):
-    duration = end - start
-    zoom_start = 1.0
-    zoom_end = 1.1
+    duration = min(end - start, 3)
+    img_clip = ImageClip(image_path, duration=duration)
+    img_w, img_h = img_clip.size
+    vid_w, vid_h = video_size
+
+    # Compute initial scale so the image is big enough for zooming
+    scale_to_cover = max(vid_w / img_w, vid_h / img_h)
+    zoom_margin = 1.25
+    base_scale = scale_to_cover * zoom_margin
 
     def zoom(t):
-        return zoom_start + (zoom_end - zoom_start) * (t / duration)
+        return base_scale * (1 + 0.20 * (t / duration))
 
     return (
-        ImageClip(image_path)
-        .with_start(start)
-        .with_end(end)
+        img_clip
         .resized(lambda t: zoom(t))
-        .cropped(x1=(1024 - video_size[0]) // 2, width=video_size[0])
-        .with_position((0, 0))  # anchor top-left to fill the frame
-        .with_opacity(0.95)
+        .with_position("center")  # safe as long as image always covers frame
+        .with_start(start)
+        .with_duration(duration)
+        .with_opacity(1)
     )
 
 def build_overlays(video_clip, whisperx_json_path):
@@ -117,19 +121,9 @@ def build_overlays(video_clip, whisperx_json_path):
     if not segments:
         print("⚠️ No segments found for subtitles.")
         return overlays
-
-    for segment in segments:
-        if segment.get("b_roll_score", 0) < 6:
-            continue
-        
-        start = segment.get("start", 0)
-        end = segment.get("end", 0)
-        image_path = "broll_images/" + slugify(segment["text"][:10]) + ".png"
-        if not os.path.exists(image_path):
-            generate_b_roll_image(segment["text"], image_path)
-
-        if os.path.exists(image_path):
-            overlays.append(generate_b_roll_overlay(image_path, start, end, (video_clip.w, video_clip.h)))
+    
+    broll_overlay = find_broll_segment_and_generate_broll_overlay(video_clip, segments)
+    if broll_overlay: overlays.extend(broll_overlay)
     
     for segment in segments:
         for word_info in segment.get("words", []):
@@ -170,28 +164,33 @@ def build_overlays(video_clip, whisperx_json_path):
 
     return overlays
 
+def find_broll_segment_and_generate_broll_overlay(video_clip, segments):
+    # Calculate how many segments to keep
+    video_duration = video_clip.duration  # in seconds
+    num_top_segments = int(math.ceil(video_duration / 60))  # 1 per minute
+    
+    eligible_segments = [s for s in segments if s.get("b_roll_score", 0) >= 3]
+    
+    # Sort and take top X
+    top_segments = sorted(
+        eligible_segments, key=lambda s: s["b_roll_score"], reverse=True
+    )[:num_top_segments]
+    
+    overlays = []
+    for segment in top_segments:
+        start = segment.get("start", 0)
+        end = segment.get("end", 0)
+        image_path = "broll_images/" + slugify(segment["text"][:20]) + ".png"
+        if not os.path.exists(image_path):
+            generate_b_roll_image(segment["text"], image_path)
+
+        if os.path.exists(image_path):
+            overlays.append(generate_b_roll_overlay(image_path, start, end, (video_clip.w, video_clip.h)))
+
+    return overlays
+
 def path_to_emoji(emoji):
     emoji_path = os.path.join(EMOJI_RENDER_DIR, emoji_to_filename(emoji))
     if not os.path.exists(emoji_path):
         render_emoji_to_png(emoji, emoji_path)
     return emoji_path
-
-def compose_video_with_overlays(video_path, whisperx_json_path, output_path):
-    video_clip = VideoFileClip(video_path)
-    #video_clip = video_clip.with_subclip(0, 5);
-
-    #emoji_clips = build_emoji_overlays(video_clip, whisperx_json_path)
-    subtitle_clips = build_overlays(video_clip, whisperx_json_path)
-
-    final = CompositeVideoClip([video_clip] + subtitle_clips)
-    dev_mode = False
-    
-    output_file = os.path.join(output_path, f"{filename(video_path)}.mp4")
-    final.write_videofile(
-        output_file,
-        codec="libx264" if dev_mode else "h264_videotoolbox",
-        audio_codec="aac",
-        preset="ultrafast" if dev_mode else "medium",
-        fps=12 if dev_mode else 30,
-        threads=4
-    )
