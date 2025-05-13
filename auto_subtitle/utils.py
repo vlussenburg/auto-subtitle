@@ -1,4 +1,5 @@
 import ffmpeg
+from moviepy import VideoClip
 import whisperx
 import torch
 import json
@@ -6,7 +7,8 @@ import tempfile
 from openai import OpenAI
 import os
 import requests
-from typing import Iterator, TextIO 
+from typing import Iterator, TextIO
+from .face_tracking import FacePoint
 
 client = OpenAI()
 

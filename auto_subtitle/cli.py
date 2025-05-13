@@ -41,17 +41,39 @@ def main():
     video_paths = args.pop("video")
         
     if not skip_vertical:
-        create_subtitled_video(video_paths, 9/16)
+        create_subtitled_video(video_paths, True)
     if not skip_horizontal:
-        create_subtitled_video(video_paths, 16/9)
+        create_subtitled_video(video_paths, False)
 
-def create_subtitled_video(video_paths, target_aspect):
+def create_subtitled_video(video_paths, horizontal: bool):
     clips = []
     for idx, video_path in enumerate(video_paths):
         video_clip = VideoFileClip(video_path)
-        video_clip = center_crop_to_aspect_ratio(video_clip, target_aspect)
         
-        track_face_centers(video_path, work_dir=WORK_DIR)
+        video_w, video_h = video_clip.size
+        clip_fps = video_clip.fps
+        target_w, target_h = (1920, 1080) if horizontal else (1080, 1920)
+        video_clip = center_crop_to_aspect_ratio(video_clip, target_w / target_h)
+        
+        face_points = track_face_centers(video_path, work_dir=WORK_DIR)
+
+        def pos(t):
+            i = min(int(t * clip_fps), len(face_points) - 1)
+            face_x, face_y = face_points[i].x, face_points[i].y
+            
+            # how far to pan the frame so the face ends up centered in target
+            cx = int(face_x - target_w // 2)
+            cy = int(face_y - target_h // 2)
+
+            # clamp to valid bounds (can't show black edges)
+            cx = min(max(cx, 0), video_w - target_w)
+            cy = min(max(cy, 0), video_h - target_h)
+
+            # position to apply to full-size video
+            return (-cx, -cy)
+        
+        #video_clip = video_clip.with_position(pos)
+        #video_clip = video_clip.resized(width=target_w, height=target_h)
 
         audio_path = get_audio(video_path, WORK_DIR)
         whisperx_json_path = generate_and_write_whisperx_json(audio_path, WORK_DIR)
@@ -64,7 +86,7 @@ def create_subtitled_video(video_paths, target_aspect):
     
     final = concatenate_videoclips(clips)
     
-    aspect_str = "9x16" if target_aspect == 9/16 else "16x9"
+    aspect_str = "9x16" if not horizontal else "16x9"
     output_file = f"{filename(video_paths[-1])}_{aspect_str}.mp4"
     dev_mode = True
     if dev_mode:

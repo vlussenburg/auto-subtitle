@@ -23,13 +23,13 @@ def read_from_cache(infile) -> Optional[List[FacePoint]]:
         return None
     with open(infile) as f:
         data = json.load(f)
-    return [(d["x"], d["y"]) for d in data]
+    return [FacePoint(d["frame"], d["x"], d["y"]) for d in data]
 
 def write_to_cache(data: list[FacePoint], out_file) -> None:
     with open(out_file, "w") as f:
         json.dump([pt.to_dict() for pt in data], f, indent=2)
 
-def track_face_centers(video_path, smoothing_window=11, work_dir="work"):
+def track_face_centers(video_path, smoothing_window=11, work_dir="work") -> list[FacePoint]:
     slug = slugify(os.path.splitext(os.path.basename(video_path))[0])
     out_file = os.path.join(work_dir, f"{slug}.face_track.json")
     
@@ -85,4 +85,5 @@ def track_face_centers(video_path, smoothing_window=11, work_dir="work"):
 
     result = [FacePoint(i, float(x), float(y)) for i, (x, y) in enumerate(zip(x_smooth, y_smooth))]
     write_to_cache(result, video_path, work_dir)
+    return result
     
