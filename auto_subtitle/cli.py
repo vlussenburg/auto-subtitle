@@ -41,39 +41,45 @@ def main():
     video_paths = args.pop("video")
         
     if not skip_vertical:
-        create_subtitled_video(video_paths, True)
-    if not skip_horizontal:
         create_subtitled_video(video_paths, False)
+    if not skip_horizontal:
+        create_subtitled_video(video_paths, True)
 
 def create_subtitled_video(video_paths, horizontal: bool):
+    dev_mode = True
+    aspect_str = "9x16" if not horizontal else "16x9"
+    output_file = f"{filename(video_paths[-1])}_{aspect_str}.mp4"
+    
+    if not dev_mode and os.path.exists(output_file):
+        return
+    
     clips = []
     for idx, video_path in enumerate(video_paths):
         video_clip = VideoFileClip(video_path)
         
-        video_w, video_h = video_clip.size
+        orig_video_w, orig_video_h = video_clip.size
         clip_fps = video_clip.fps
         target_w, target_h = (1920, 1080) if horizontal else (1080, 1920)
-        video_clip = center_crop_to_aspect_ratio(video_clip, target_w / target_h)
+        scale = target_h / orig_video_h
+        video_clip = video_clip.resized(height=target_h)
+        scaled_w, scaled_h = int(orig_video_w * scale), int(orig_video_h * scale)
         
         face_points = track_face_centers(video_path, work_dir=WORK_DIR)
-
-        def pos(t):
+        
+        # this reference is needed in the make_cropped_frame def
+        resized_clip = video_clip.resized(height=target_h)
+        
+        def make_cropped_frame(t):
+            frame = resized_clip.get_frame(t)
             i = min(int(t * clip_fps), len(face_points) - 1)
             face_x, face_y = face_points[i].x, face_points[i].y
-            
-            # how far to pan the frame so the face ends up centered in target
-            cx = int(face_x - target_w // 2)
-            cy = int(face_y - target_h // 2)
+            face_x_scaled = face_x * scale
+            face_y_scaled = face_y * scale
+            cx = int(min(max(face_x_scaled - target_w // 2, 0), scaled_w - target_w))
+            cy = int(min(max(face_y_scaled - target_h // 2, 0), scaled_h - target_h))
+            return frame[cy:cy+target_h, cx:cx+target_w]
 
-            # clamp to valid bounds (can't show black edges)
-            cx = min(max(cx, 0), video_w - target_w)
-            cy = min(max(cy, 0), video_h - target_h)
-
-            # position to apply to full-size video
-            return (-cx, -cy)
-        
-        #video_clip = video_clip.with_position(pos)
-        #video_clip = video_clip.resized(width=target_w, height=target_h)
+        video_clip = resized_clip.with_make_frame(make_cropped_frame)
 
         audio_path = get_audio(video_path, WORK_DIR)
         whisperx_json_path = generate_and_write_whisperx_json(audio_path, WORK_DIR)
@@ -85,10 +91,7 @@ def create_subtitled_video(video_paths, horizontal: bool):
         clips.append(clip)
     
     final = concatenate_videoclips(clips)
-    
-    aspect_str = "9x16" if not horizontal else "16x9"
-    output_file = f"{filename(video_paths[-1])}_{aspect_str}.mp4"
-    dev_mode = True
+
     if dev_mode:
         final.write_videofile(
             os.path.join(OUTPUT_DIR, output_file),

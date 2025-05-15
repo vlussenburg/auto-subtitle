@@ -1,29 +1,26 @@
 import ffmpeg
 from moviepy import VideoClip
 import whisperx
-import torch
 import json
 import tempfile
-from openai import OpenAI
+
 import os
 import requests
 from typing import Iterator, TextIO
 from .face_tracking import FacePoint
 
-client = OpenAI()
 
-def center_crop_to_aspect_ratio(clip, target_aspect):
-    if target_aspect not in {9/16, 16/9}:
-        raise ValueError("target_aspect must be either 9/16 or 16/9")
+
+def center_crop_to_aspect_ratio(clip: VideoClip, target_w: int, target_h: int) -> VideoClip:
+    if clip.aspect_ratio == target_w / target_h:
+        return clip
     
     from moviepy.video.fx import Crop
     
     w, h = clip.size
-    current_aspect = w / h
 
-    if current_aspect > target_aspect:
+    if w > target_w:
         # Too wide → crop width
-        target_w = int(h * target_aspect)
         x1 = (w - target_w) // 2
         return Crop(x1=x1, width=target_w).apply(clip)
     else:
@@ -46,12 +43,13 @@ def get_audio(path, output_path=tempfile.gettempdir()):
     return output_file
 
 def generate_and_write_whisperx_json(audio_path, output_json_path="work", model_size="small.en"):
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-
     output_file = os.path.join(output_json_path, f"{filename(audio_path)}.json")
     if os.path.exists(output_file):
         print(f"WhisperX JSON already exists at {output_file}, reusing it.")
         return output_file
+    
+    import torch
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
     print(f"Loading WhisperX model {model_size} on {device}...")
     model = whisperx.load_model(model_size, device=device, compute_type="float32")
@@ -117,12 +115,22 @@ def is_vertical(clip):
     return clip.h > clip.w
 
 def generate_b_roll_image(prompt: str, output_path: str, vertical: bool = True):
+    from openai import OpenAI
+    client = OpenAI()
+
     try:
         print(f"🎨 Generating B-roll for: {prompt[:80]}...")
         orientation = "portrait" if vertical else "landscape"
         response = client.images.generate(
             model="dall-e-3",
-            prompt=f"An image in {orientation} orientation for use as B-roll in a video for a channel focusing on serious content around mental health, philosophy and psychology, avoiding written text. If portraying humans or animals, make sure they are anotomically correct without extra or missing limbs. Prompt: {prompt}",
+            prompt=(
+                f"{orientation.capitalize()} orientation. "
+                f"A high-quality image for use as B-roll in a video about serious topics like mental health, philosophy, and psychology. "
+                f"No text. If humans or animals are shown, ensure anatomical correctness (no extra or missing limbs). "
+                f"Visual tone: introspective, cinematic, grounded. "
+                f"{prompt}"
+                ),
+            #prompt=f"An image in {orientation} orientation for use as B-roll in a video for a channel focusing on serious content around mental health, philosophy and psychology, avoiding written text. If portraying humans or animals, make sure they are anotomically correct without extra or missing limbs. Prompt: {prompt}",
             n=1,
             size="1024x1792" if vertical else "1792x1024",
             quality="standard",
@@ -142,6 +150,8 @@ def add_broll_score(prompt: str, json_segment: dict = None) -> bool:
         "for a single cinematic image, on a scale from 0 (not visual at all) to 10 (very visual). "
         "Only return the number."
     )
+    from openai import OpenAI
+    client = OpenAI()
 
     try:
         response = client.chat.completions.create(
