@@ -57,12 +57,9 @@ def generate_and_write_whisperx_json(audio_path, output_json_path="work", model_
     print(f"Transcribing {audio_path}...")
     result = model.transcribe(audio_path)
 
-    print("Aligning words for word-level timestamps...")
-    alignment_model, metadata = whisperx.load_align_model(language_code="en", device=device)
-    aligned_result = whisperx.align(result["segments"], alignment_model, metadata, audio_path, device=device)
+    aligned_result = align_words(audio_path, result, device=device)
     
-    for segment in aligned_result["segments"]:
-        add_broll_score(segment["text"], json_segment=segment)
+    add_broll_score(add_broll_score, aligned_result)
 
     print(f"Saving augmented output to {output_file}...")
     with open(output_file, "w", encoding="utf-8") as f:
@@ -70,6 +67,16 @@ def generate_and_write_whisperx_json(audio_path, output_json_path="work", model_
 
     print("✅ WhisperX JSON generated successfully.")
     return output_file
+
+def add_broll_score(add_broll_score, aligned_result):
+    for segment in aligned_result["segments"]:
+        add_broll_score(segment["text"], json_segment=segment)
+
+def align_words(audio_path, result, device="cpu"):
+    print("Aligning words for word-level timestamps...")
+    alignment_model, metadata = whisperx.load_align_model(language_code="en", device=device)
+    aligned_result = whisperx.align(result["segments"], alignment_model, metadata, audio_path, device=device)
+    return aligned_result
 
 def str2bool(string):
     string = string.lower()

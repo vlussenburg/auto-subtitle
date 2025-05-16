@@ -46,7 +46,7 @@ def main():
         create_subtitled_video(video_paths, True)
 
 def create_subtitled_video(video_paths, horizontal: bool):
-    dev_mode = True
+    dev_mode = False
     aspect_str = "9x16" if not horizontal else "16x9"
     output_file = f"{filename(video_paths[-1])}_{aspect_str}.mp4"
     

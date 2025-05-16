@@ -79,7 +79,7 @@ def track_face_centers(video_path, smoothing_window=60, work_dir="work") -> list
 
         def apply_kalman_1d(data: np.ndarray) -> np.ndarray:
             kf = cv2.KalmanFilter(4, 1)
-            kf.measurementMatrix = np.array([[1], [0], [0], [0]], dtype=np.float32)
+            kf.measurementMatrix = np.array([[1, 0, 0, 0]], dtype=np.float32)
             kf.transitionMatrix = np.array([[1,1,0.5,0],
                                             [0,1,1,0],
                                             [0,0,1,0],
