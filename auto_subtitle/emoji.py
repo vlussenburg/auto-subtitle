@@ -94,7 +94,7 @@ def get_emoji_overlay(video_clip, word, start, end, y_position):
     return emoji_clip
     
 def generate_b_roll_overlay(image_path, start, end, video_size):
-    duration = max(end - start, 3)
+    duration = min(max(end - start, 3), 5)
     img_clip = ImageClip(image_path, duration=duration)
     img_w, img_h = img_clip.size
     target_w, target_h = video_size
@@ -182,9 +182,9 @@ def build_overlays(video_clip, whisperx_json_path):
 def find_broll_segment_and_generate_broll_overlay(video_clip, segments):
     # Calculate how many segments to keep
     video_duration = video_clip.duration  # in seconds
-    num_top_segments = int(math.ceil(video_duration / 60))  # 1 per minute
+    num_top_segments = int(math.ceil(video_duration / 30))  # 1 per 30s
     
-    eligible_segments = [s for s in segments if s.get("b_roll_score", 0) >= 3]
+    eligible_segments = [s for s in segments if s.get("b_roll_score", 0) >= 8 and s.get("b_roll_prompt") and s.get("emotional_tone")]
     
     # Sort and take top X
     top_segments = sorted(
@@ -196,9 +196,9 @@ def find_broll_segment_and_generate_broll_overlay(video_clip, segments):
         start = segment.get("start", 0)
         end = segment.get("end", 0)
         aspect_str = "9x16" if is_vertical(video_clip) else "16x9"
-        image_path = "broll_images/" + slugify(segment["text"][:20]) + "_" + aspect_str + ".png"
+        image_path = "broll_images/" + slugify(segment["b_roll_prompt"][:100]) + "_" + aspect_str + ".png"
         if not os.path.exists(image_path):
-            generate_b_roll_image(segment["text"], image_path, is_vertical(video_clip))
+            generate_b_roll_image(segment["b_roll_prompt"], image_path, is_vertical(video_clip))
 
         if os.path.exists(image_path):
             overlays.append(generate_b_roll_overlay(image_path, start, end, (video_clip.w, video_clip.h)))

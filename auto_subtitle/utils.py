@@ -44,22 +44,32 @@ def get_audio(path, output_path=tempfile.gettempdir()):
 
 def generate_and_write_whisperx_json(audio_path, output_json_path="work", model_size="small.en"):
     output_file = os.path.join(output_json_path, f"{filename(audio_path)}.json")
-    if os.path.exists(output_file):
+    
+    if not os.path.exists(output_file):    
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        print(f"Loading WhisperX model {model_size} on {device}...")
+        model = whisperx.load_model(model_size, device=device, compute_type="float32")
+
+        print(f"Transcribing {audio_path}...")
+        result = model.transcribe(audio_path)
+
+        aligned_result = align_words(audio_path, result, device=device)
+    else:
         print(f"WhisperX JSON already exists at {output_file}, reusing it.")
-        return output_file
+        aligned_result = json.load(open(output_file, "r"))
     
-    import torch
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    print(f"Loading WhisperX model {model_size} on {device}...")
-    model = whisperx.load_model(model_size, device=device, compute_type="float32")
-
-    print(f"Transcribing {audio_path}...")
-    result = model.transcribe(audio_path)
-
-    aligned_result = align_words(audio_path, result, device=device)
-    
-    add_broll_score(add_broll_score, aligned_result)
+    if not all("b_roll_score" in segment for segment in aligned_result.get("segments", [])):
+        for segment in aligned_result["segments"]:
+            print(f"Scoring B-roll suitability for segment: {segment['text'][:80]}...")
+            answer = determine_broll_score(segment["text"])
+            print(f"Answer: {answer}")
+            segment["b_roll_score"] =  answer.get("score", 0)
+            segment["b_roll_prompt"] = answer.get("prompt", None)
+            segment["emotional_tone"] = answer.get("emotional_tone", None)
+    else:
+        print("✅ B-roll scores already added to all segments, skipping scoring.")
 
     print(f"Saving augmented output to {output_file}...")
     with open(output_file, "w", encoding="utf-8") as f:
@@ -68,9 +78,6 @@ def generate_and_write_whisperx_json(audio_path, output_json_path="work", model_
     print("✅ WhisperX JSON generated successfully.")
     return output_file
 
-def add_broll_score(add_broll_score, aligned_result):
-    for segment in aligned_result["segments"]:
-        add_broll_score(segment["text"], json_segment=segment)
 
 def align_words(audio_path, result, device="cpu"):
     print("Aligning words for word-level timestamps...")
@@ -128,18 +135,20 @@ def generate_b_roll_image(prompt: str, output_path: str, vertical: bool = True):
     try:
         print(f"🎨 Generating B-roll for: {prompt[:80]}...")
         orientation = "portrait" if vertical else "landscape"
+        size = "1024x1792" if vertical else "1792x1024"
         response = client.images.generate(
             model="dall-e-3",
-            prompt=(
-                f"{orientation.capitalize()} orientation. "
-                f"A high-quality image for use as B-roll in a video about serious topics like mental health, philosophy, and psychology. "
-                f"No text. If humans or animals are shown, ensure anatomical correctness (no extra or missing limbs). "
-                f"Visual tone: introspective, cinematic, grounded. "
-                f"{prompt}"
-                ),
-            #prompt=f"An image in {orientation} orientation for use as B-roll in a video for a channel focusing on serious content around mental health, philosophy and psychology, avoiding written text. If portraying humans or animals, make sure they are anotomically correct without extra or missing limbs. Prompt: {prompt}",
+            prompt = (
+                f"{orientation.capitalize()} orientation.\n"
+                "Generate a cinematic-quality B-roll image for a video on topics like mental health, philosophy, or personal growth.\n"
+                "The image should be composed specifically for a vertical portrait frame." if vertical else "The image should be composed specifically for a wide landscape frame." + "\n"
+                "Avoid text, symbols, or watermarks.\n"
+                "If humans or animals are depicted, ensure anatomical correctness (no extra or missing limbs).\n"
+                "The style should be introspective, grounded, and visually rich.\n"
+                f"Scene description: {prompt}"
+            ),
             n=1,
-            size="1024x1792" if vertical else "1792x1024",
+            size=size,
             quality="standard",
             response_format="url",
         )
@@ -151,28 +160,49 @@ def generate_b_roll_image(prompt: str, output_path: str, vertical: bool = True):
     except Exception as e:
         print(f"❌ Failed to generate B-roll: {e}")
 
-def add_broll_score(prompt: str, json_segment: dict = None) -> bool:
-    system_prompt = (
-        "You are a helpful assistant. Rate how visually suitable the following sentence is "
-        "for a single cinematic image, on a scale from 0 (not visual at all) to 10 (very visual). "
-        "Only return the number."
-    )
-    from openai import OpenAI
-    client = OpenAI()
+def determine_broll_score(segment_text: str) -> tuple[int, str | None]:
+    system_prompt = """
+    You are a visual assistant trained to select B-roll and supplemental imagery to enhance podcast or YouTube content. 
 
-    try:
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ]
-        )
-        score_text = response.choices[0].message.content.strip()
-        score = int(score_text)
+    Your job is to evaluate whether a given segment can be represented effectively by a single cinematic image. If so, suggest a strong, metaphorical or thematic visual — not a literal one.
 
-        if json_segment is not None:
-            json_segment["b_roll_score"] = score
-    except Exception as e:
-        print(f"⚠️ Could not score B-roll suitability: {e}")
-        return False
+    Focus on abstract or emotionally resonant ideas. Avoid clichés and generic imagery. Use simple, evocative phrases like: “waves crashing,” “man standing in a doorway,” or “fog rolling over mountains.”
+
+    Never suggest text overlays. Assume the final use is silent B-roll under voiceover.
+    """
+    
+    user_prompt = f"""
+    Evaluate the following transcript segment and rate how suitable it is for representing with a single cinematic B-roll image.
+
+    Return a JSON object with:
+    - a key `"score"` (an integer from 0 to 10), indicating how visual the moment is.
+    - a key `"emotional_tone"` (a single word, lower case) that is null or captures the emotional tone of the moment, adhering strictly Plutchik’s Wheel of Emotions ("joy", "sadness", "anticipation", "fear", "anger", "disgust", "surprise", "trust"). Don't use any other words or phrases.
+    - a key `"prompt"` only if the score is 8 or above — this should describe a cinematic visual metaphor for the moment, not a literal rephrasing.
+
+    Segment:
+    `{segment_text}`
+
+    Examples:
+    {{ "score": 8, "emotional_tone": "anticipation", "prompt": "A person journaling in a quiet forest clearing, with sunlight breaking through the trees." }},
+    {{ "score": 3, "emotional_tone": null, "prompt": null }}
+    """
+
+    # In the determine_broll_score function, replace the previous selection with:
+    return json.loads(ask_openai(system_prompt, user_prompt))
+
+def ask_openai(system_prompt: str, user_prompt: str) -> str:
+        from openai import OpenAI
+        client = OpenAI()
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ]
+            )
+            answer = response.choices[0].message.content.strip()
+            return answer
+        except Exception as e:
+            print(f"⚠️ Error: {e}")
+            return None
