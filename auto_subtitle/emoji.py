@@ -35,6 +35,7 @@ def emoji_to_filename(emoji):
     return '-'.join(f"{ord(c):x}" for c in emoji) + ".png"
 
 def render_emoji_to_png(emoji, video_clip, path):
+    print(emoji)
     size = get_emoji_size(video_clip)
     font = ImageFont.truetype(FONT_PATH, size, encoding='unic')
     image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
@@ -179,20 +180,11 @@ def build_overlays(video_clip, whisperx_json_path):
 
     return overlays
 
-def find_broll_segment_and_generate_broll_overlay(video_clip, segments):
-    # Calculate how many segments to keep
-    video_duration = video_clip.duration  # in seconds
-    num_top_segments = int(math.ceil(video_duration / 30))  # 1 per 30s
-    
-    eligible_segments = [s for s in segments if s.get("b_roll_score", 0) >= 8 and s.get("b_roll_prompt") and s.get("emotional_tone")]
-    
-    # Sort and take top X
-    top_segments = sorted(
-        eligible_segments, key=lambda s: s["b_roll_score"], reverse=True
-    )[:num_top_segments]
-    
+def find_broll_segment_and_generate_broll_overlay(video_clip, segments):    
     overlays = []
-    for segment in top_segments:
+    for segment in segments:
+        if segment["b_roll_prompt"] is None:
+            continue
         start = segment.get("start", 0)
         end = segment.get("end", 0)
         aspect_str = "9x16" if is_vertical(video_clip) else "16x9"

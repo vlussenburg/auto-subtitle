@@ -6,8 +6,9 @@ from .emoji import build_overlays
 from dotenv import load_dotenv
 from .face_tracking import track_face_centers
 
-OUTPUT_DIR = ""
+OUTPUT_DIR = "dist"
 WORK_DIR = "work"
+dev_mode = str2bool(os.getenv("DEV_MODE"))
 
 def main():
     parser = argparse.ArgumentParser(
@@ -16,7 +17,7 @@ def main():
                         help="paths to video files to transcribe (provide a list of video paths)")
     parser.add_argument("--model", default="small",
                         help="name of the Whisper model to use")
-    parser.add_argument("--output_dir", "-o", type=str,
+    parser.add_argument("--output-dir", "-o", type=str,
                         default="subtitled", help="directory to save the outputs")
     parser.add_argument("--verbose", type=str2bool, default=False,
                         help="whether to print out the progress and debug messages")
@@ -41,16 +42,16 @@ def main():
     video_paths = args.pop("video")
         
     if not skip_vertical:
-        create_subtitled_video(video_paths, False)
+        create_subtitled_video(video_paths, False, output_dir=OUTPUT_DIR)
     if not skip_horizontal:
-        create_subtitled_video(video_paths, True)
+        create_subtitled_video(video_paths, True, output_dir=OUTPUT_DIR)
 
-def create_subtitled_video(video_paths, horizontal: bool):
-    dev_mode = False
+def create_subtitled_video(video_paths, horizontal: bool, output_dir: str):
     aspect_str = "9x16" if not horizontal else "16x9"
     output_file = f"{filename(video_paths[-1])}_{aspect_str}.mp4"
     
-    if not dev_mode and os.path.exists(output_file):
+    if os.path.exists(output_file): # and not dev_mode
+        print(f"create_subtitled_video: {output_file} Output file already exists, skipping.")
         return
     
     clips = []
@@ -94,7 +95,7 @@ def create_subtitled_video(video_paths, horizontal: bool):
 
     if dev_mode:
         final.write_videofile(
-            os.path.join(OUTPUT_DIR, output_file),
+            os.path.join(output_dir, output_file),
             fps=12,
             bitrate="800k",         # Lower bitrate for faster rendering
             preset="ultrafast",     # ffmpeg preset (requires ffmpeg installed)
@@ -104,7 +105,7 @@ def create_subtitled_video(video_paths, horizontal: bool):
         )
     else:
         final.write_videofile(
-            os.path.join(OUTPUT_DIR, output_file),
+            os.path.join(output_dir, output_file),
             fps=30,
             audio_codec="aac",
             ffmpeg_params=["-movflags", "+faststart"],
