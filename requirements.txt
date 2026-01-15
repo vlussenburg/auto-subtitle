@@ -1,17 +1,1 @@
-whisperx
-torch
-torchaudio
-torchvision
-ffmpeg-python
-openai
-moviepy
-pyobjc
-python-dotenv
-requests
-python-slugify
-slugify
-mediapipe
-opencv-python
-numpy
-scipy
-tqdm
+-e .

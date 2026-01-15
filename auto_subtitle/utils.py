@@ -4,8 +4,9 @@ import whisperx
 import json
 import tempfile
 
+import sys
 import os
-import requests
+import base64
 from typing import Iterator, TextIO
 from .face_tracking import FacePoint
 
@@ -14,9 +15,9 @@ from .face_tracking import FacePoint
 def center_crop_to_aspect_ratio(clip: VideoClip, target_w: int, target_h: int) -> VideoClip:
     if clip.aspect_ratio == target_w / target_h:
         return clip
-    
+
     from moviepy.video.fx import Crop
-    
+
     w, h = clip.size
 
     if w > target_w:
@@ -44,8 +45,8 @@ def get_audio(path, output_path=tempfile.gettempdir()):
 
 def generate_and_write_whisperx_json(audio_path, output_json_path="work", model_size="small.en"):
     output_file = os.path.join(output_json_path, f"{filename(audio_path)}.json")
-    
-    if not os.path.exists(output_file):    
+
+    if not os.path.exists(output_file):
         import torch
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -59,12 +60,13 @@ def generate_and_write_whisperx_json(audio_path, output_json_path="work", model_
     else:
         print(f"WhisperX JSON already exists at {output_file}, reusing it.")
         aligned_result = json.load(open(output_file, "r"))
-    
-    if not all("b_roll_prompt" in segment for segment in aligned_result.get("segments", [])):
+
+    if not all("b_roll_score" in segment for segment in aligned_result.get("segments", [])):
         for segment in aligned_result["segments"]:
             print(f"Scoring B-roll suitability for segment: {segment['text'][:80]}...")
             answer = determine_broll_score(segment["text"])
             print(f"Answer: {answer}")
+            segment["b_roll_score"] =  answer.get("score", 0)
             segment["b_roll_prompt"] = answer.get("prompt", None)
             segment["emotional_tone"] = answer.get("emotional_tone", None)
     else:
@@ -135,69 +137,51 @@ def generate_b_roll_image(prompt: str, output_path: str, vertical: bool = True):
         print(f"🎨 Generating B-roll for: {prompt[:80]}...")
         orientation = "portrait" if vertical else "landscape"
         size = "1024x1792" if vertical else "1792x1024"
-        prompt = (
-            f"Orientation: {orientation}.\n"
-            "Generate a cinematic-quality image related to mental health, philosophy, or personal growth.\n"
-            "Avoid text, symbols, or watermarks.\n"
-            "Depict a realistic, grounded scene — including setting, subject(s), lighting, and mood.\n"
-            "If humans or animals are shown, ensure anatomical accuracy.\n"
-            "The style should feel introspective and visually rich.\n"
-            f"Scene description: {prompt}"
-        )
         response = client.images.generate(
-            model="dall-e-3",
-            prompt=prompt,
-            n=1,
-            size=size,
-            quality="standard",
-            response_format="url",
+            model="gpt-image-1",
+            prompt = (
+                f"The image should be composed specifically for a {orientation} frame (size {size}).\n"
+                f"Scene description: {prompt}"
+            )
         )
-        image_url = response.data[0].url
-        img_data = requests.get(image_url).content
+        image_base64 = response.data[0].b64_json
+        image_bytes = base64.b64decode(image_base64)
         with open(output_path, "wb") as f:
-            f.write(img_data)
+            f.write(image_bytes)
         print(f"✅ Saved B-roll to {output_path}")
     except Exception as e:
         print(f"❌ Failed to generate B-roll: {e}")
+        sys.exit(1)
 
 def determine_broll_score(segment_text: str) -> tuple[int, str | None]:
     system_prompt = """
-You are a visual assistant generating literal, cinematic image prompts for silent B-roll in podcast or YouTube content.
+    You are a visual assistant trained to select B-roll and supplemental imagery to enhance podcast or YouTube content.
 
-Each prompt must describe a realistic visual scene that can be captured in a single frame — including setting, subject(s), lighting, and mood.
+    Your job is to evaluate whether a given segment can be represented effectively by a single cinematic image. If so, suggest a strong, metaphorical or thematic visual — not a literal one.
 
-Avoid abstraction, metaphor, surrealism, logos, text, or symbols. Focus on visual clarity. If humans or animals appear, assume correct anatomy.
+    Focus on abstract or emotionally resonant ideas. Avoid clichés and generic imagery. Use simple, evocative phrases like: “waves crashing,” “man standing in a doorway,” or “fog rolling over mountains.”
 
-If the transcript is not visual enough to be turned into a clear scene, return "prompt": null. If no clear emotional tone is present, return "emotional_tone": null.
-
-Use only one emotion from Plutchik’s Wheel: "joy", "sadness", "anticipation", "fear", "anger", "disgust", "surprise", or "trust".
-"""
+    Never suggest text overlays. Assume the final use is silent B-roll under voiceover.
+    """
 
     user_prompt = f"""
-Determine whether the following podcast transcript segment can be effectively represented by a single, literal, cinematic image for silent B-roll.
+    Evaluate the following transcript segment and rate how suitable it is for representing with a single cinematic B-roll image.
 
-If so, write a vivid, realistic image description. Include setting, subject(s), lighting, and mood — like you are describing a movie still. No text, no surrealism, no abstraction. Do not suggest metaphors.
+    Return a JSON object with:
+    - a key `"score"` (an integer from 0 to 10), indicating how visual the moment is.
+    - a key `"emotional_tone"` (a single word, lower case) that is null or captures the emotional tone of the moment, adhering strictly Plutchik’s Wheel of Emotions ("joy", "sadness", "anticipation", "fear", "anger", "disgust", "surprise", "trust"). Don't use any other words or phrases.
+    - a key `"prompt"` only if the score is 8 or above — this should describe a cinematic visual metaphor for the moment, not a literal rephrasing.
 
-If the segment is not visual enough, return "prompt": null.
+    Segment:
+    `{segment_text}`
 
-Also extract the emotional tone of the segment, using only one of the following:
-"joy", "sadness", "anticipation", "fear", "anger", "disgust", "surprise", or "trust".
-If no clear tone is present, return "emotional_tone": null.
-
-Return a JSON object with:
-- "emotional_tone": one word or null
-- "prompt": the image description or null
-
-Segment:
-`{segment_text}`
-"""
+    Examples:
+    {{ "score": 8, "emotional_tone": "anticipation", "prompt": "A person journaling in a quiet forest clearing, with sunlight breaking through the trees." }},
+    {{ "score": 3, "emotional_tone": null, "prompt": null }}
+    """
 
     # In the determine_broll_score function, replace the previous selection with:
-    answer = ask_openai(system_prompt, user_prompt)
-    if answer:
-        return json.loads(answer)
-    else:
-        return {"score": 0, "prompt": None, "emotional_tone": None}
+    return json.loads(ask_openai(system_prompt, user_prompt))
 
 def ask_openai(system_prompt: str, user_prompt: str) -> str:
         from openai import OpenAI

@@ -9,6 +9,7 @@ from slugify import slugify
 from .utils import *
 import json
 
+
 def load_inverted_emoji_index(path="external/emojis.json"):
     with open(path) as f:
         raw = json.load(f)
@@ -35,7 +36,6 @@ def emoji_to_filename(emoji):
     return '-'.join(f"{ord(c):x}" for c in emoji) + ".png"
 
 def render_emoji_to_png(emoji, video_clip, path):
-    print(emoji)
     size = get_emoji_size(video_clip)
     font = ImageFont.truetype(FONT_PATH, size, encoding='unic')
     image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
@@ -78,7 +78,7 @@ def get_emoji_overlay(video_clip, word, start, end, y_position):
             "scale": lambda t: 1.0
         },
     ]
-    
+
     emojis = get_emojis_for_word(word.lower())
     if not emojis:
         return None
@@ -93,17 +93,17 @@ def get_emoji_overlay(video_clip, word, start, end, y_position):
                     .with_position(fx["position"])
                     .resized(fx["scale"]))
     return emoji_clip
-    
+
 def generate_b_roll_overlay(image_path, start, end, video_size):
     duration = min(max(end - start, 3), 5)
     img_clip = ImageClip(image_path, duration=duration)
     img_w, img_h = img_clip.size
     target_w, target_h = video_size
-    
+
     # Compute scale to cover frame, whether 9:16 or 16:9
     target_aspect = target_w / target_h
     img_aspect = img_w / img_h
-    
+
     if img_aspect > target_aspect:
         # Image is wider → scale based on height
         scale_to_cover = target_h / img_h
@@ -133,45 +133,75 @@ def build_overlays(video_clip, whisperx_json_path):
         data = json.load(f)
 
     segments = data.get("segments", [])
-    
+
     if not segments:
         print("⚠️ No segments found for subtitles.")
         return overlays
-    
+
     broll_overlay = find_broll_segment_and_generate_broll_overlay(video_clip, segments)
     if broll_overlay: overlays.extend(broll_overlay)
-    
+
+    safe_y_ratio = 0.78  # visually safe from UI
+    safe_width_ratio = 0.9
+    safe_height_ratio = 0.08
+    caption_height = int(video_clip.h * safe_height_ratio)
+    caption_width = int(video_clip.w * safe_width_ratio)
+
     for segment in segments:
         for word_info in segment.get("words", []):
             word = word_info["word"]
             start = word_info["start"]
             end = word_info["end"]
-            
-            safe_y_ratio = 0.78  # visually safe from UI
+            font_size = int(caption_height * 0.9)
+            font = ImageFont.truetype("./Bangers-Regular.ttf", font_size)
 
-            safe_width_ratio = 0.9
-            safe_height_ratio = 0.08
-                        
-            caption_height = int(video_clip.h * safe_height_ratio)
-            word_clip = TextClip(text=word, 
-                                  font="./Bangers-Regular.ttf", 
-                                  method='caption', 
-                                  size=(int(video_clip.w * safe_width_ratio), caption_height),
-                                  horizontal_align="center",
-                                  vertical_align="center",
-                                  stroke_color="black",
-                                  stroke_width=4,
-                                  color="white")
+            # --- 1. Measure text + padding ---
+            text_bbox = font.getbbox(word)  # (x0, y0, x1, y1)
+            text_w, text_h = text_bbox[2] - text_bbox[0], text_bbox[3] - text_bbox[1]
+            pad = int(font_size * 0.25)     # 25% headroom fixes clipping
+            img_w, img_h = text_w + 2*pad, text_h + 2*pad
 
-            word_clip = word_clip.with_start(start)
-            word_clip = word_clip.with_end(end)
+            # --- 2. Create transparent RGBA canvas ---
+            img = Image.new("RGBA", (img_w, img_h), (0, 0, 0, 0))
+            draw = ImageDraw.Draw(img)
 
-            # Convert Y-ratio to pixel position
+            # --- 3. Optional stroke outline ---
+            draw.text(
+                (pad, pad - text_bbox[1]),  # compensate baseline offset
+                word,
+                font=font,
+                fill=(255, 255, 255, 255),
+                stroke_fill=(0, 0, 0, 255),
+                stroke_width=3,
+            )
+
+            # --- 4. Convert to ImageClip + resize ---
+            word_clip = (
+                ImageClip(np.array(img))
+                .resized(height=caption_height)
+                .with_start(start)
+                .with_end(end)
+                .with_position(("center", int(video_clip.h * safe_y_ratio)))
+            )
+
+            # word_clip = TextClip(text=word,
+            #                       font="./Bangers-Regular.ttf",
+            #                       method='label',
+            #                       font_size=(0.9 * caption_height),
+            #                       stroke_color="black",
+            #                       stroke_width=3,
+            #                       color="white")
+
+            # word_clip = word_clip.with_start(start)
+            # word_clip = word_clip.with_end(end)
+
+            # # Convert Y-ratio to pixel position
+            # word_clip = word_clip.resized(height=caption_height)
             y_position = int(video_clip.h * safe_y_ratio)
-            word_clip = word_clip.with_position(("center", y_position))
+            # word_clip = word_clip.with_position(("center", y_position))
 
             overlays.append(word_clip)
-            
+
             emoji_end = max(end, start + 1)
             emoji_y_position = y_position - caption_height
             emoji_overlay = get_emoji_overlay(video_clip, word.lower(), start, emoji_end, emoji_y_position)
@@ -180,11 +210,20 @@ def build_overlays(video_clip, whisperx_json_path):
 
     return overlays
 
-def find_broll_segment_and_generate_broll_overlay(video_clip, segments):    
+def find_broll_segment_and_generate_broll_overlay(video_clip, segments):
+    # Calculate how many segments to keep
+    video_duration = video_clip.duration  # in seconds
+    num_top_segments = int(math.ceil(video_duration / 30))  # 1 per 30s
+
+    eligible_segments = [s for s in segments if s.get("b_roll_score", 0) >= 8 and s.get("b_roll_prompt") and s.get("emotional_tone")]
+
+    # Sort and take top X
+    top_segments = sorted(
+        eligible_segments, key=lambda s: s["b_roll_score"], reverse=True
+    )[:num_top_segments]
+
     overlays = []
-    for segment in segments:
-        if segment["b_roll_prompt"] is None:
-            continue
+    for segment in top_segments:
         start = segment.get("start", 0)
         end = segment.get("end", 0)
         aspect_str = "9x16" if is_vertical(video_clip) else "16x9"
