@@ -7,25 +7,6 @@ from PIL import Image, ImageDraw, ImageFont
 from moviepy import VideoFileClip, ImageClip, TextClip, CompositeVideoClip
 from slugify import slugify
 from .utils import *
-import json
-
-
-def load_inverted_emoji_index(path="external/emojis.json"):
-    with open(path) as f:
-        raw = json.load(f)
-
-    inverted = {}
-    for emoji, keywords in raw.items():
-        for keyword in keywords:
-            keyword = keyword.lower()
-            inverted.setdefault(keyword, []).append(emoji)
-    return inverted
-
-EMOJI_DB = load_inverted_emoji_index()
-
-def get_emojis_for_word(word):
-    if len(word) >= 5:
-        return EMOJI_DB.get(word.lower(), [])
 
 FONT_PATH = "/System/Library/Fonts/Apple Color Emoji.ttc"
 EMOJI_RENDER_DIR = "apple_emojis"
@@ -49,7 +30,8 @@ def get_emoji_size(video_clip, scale=0.05):
     size = min(preferred_sizes, key=lambda s: abs(s - target))
     return size
 
-def get_emoji_overlay(video_clip, word, start, end, y_position):
+def get_emoji_overlay(video_clip, emoji, start, end, y_position):
+    """Create an animated emoji overlay clip."""
     center_x = (video_clip.w // 2) - (get_emoji_size(video_clip) // 2)
     effect_cycle = [
         # Smooth vertical bounce (3Hz)
@@ -78,12 +60,6 @@ def get_emoji_overlay(video_clip, word, start, end, y_position):
             "scale": lambda t: 1.0
         },
     ]
-
-    emojis = get_emojis_for_word(word.lower())
-    if not emojis:
-        return None
-
-    emoji = random.choice(emojis)
     emoji_path = path_to_emoji(emoji, video_clip)
     fx = random.choice(effect_cycle)
 
@@ -127,7 +103,7 @@ def generate_b_roll_overlay(image_path, start, end, video_size):
         .with_opacity(1)
     )
 
-def build_overlays(video_clip, whisperx_json_path):
+def build_overlays(video_clip, whisperx_json_path, emoji_map=None):
     overlays = []
     with open(whisperx_json_path, 'r') as f:
         data = json.load(f)
@@ -202,10 +178,12 @@ def build_overlays(video_clip, whisperx_json_path):
 
             overlays.append(word_clip)
 
-            emoji_end = max(end, start + 1)
-            emoji_y_position = y_position - caption_height
-            emoji_overlay = get_emoji_overlay(video_clip, word.lower(), start, emoji_end, emoji_y_position)
-            if emoji_overlay:
+            # Add emoji overlay if word has one in emoji_map
+            emoji = emoji_map.get(word.lower()) if emoji_map else None
+            if emoji:
+                emoji_end = max(end, start + 1)
+                emoji_y_position = y_position - caption_height
+                emoji_overlay = get_emoji_overlay(video_clip, emoji, start, emoji_end, emoji_y_position)
                 overlays.append(emoji_overlay)
 
     return overlays

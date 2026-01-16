@@ -1,4 +1,5 @@
 import os
+import json
 import argparse
 from .utils import *
 from moviepy import VideoFileClip, CompositeVideoClip, concatenate_videoclips
@@ -6,6 +7,21 @@ from .emoji import build_overlays
 from dotenv import load_dotenv
 import numpy as np
 from .face_tracking import track_face_centers
+
+
+def load_emoji_map(video_path):
+    """Load emoji_map from sidecar .meta.json file if it exists."""
+    base, _ = os.path.splitext(video_path)
+    sidecar = base + '.meta.json'
+
+    if os.path.exists(sidecar):
+        with open(sidecar) as f:
+            data = json.load(f)
+            emoji_map = data.get("emoji_map", {})
+            if emoji_map:
+                print(f"Loaded emoji_map from {sidecar}: {emoji_map}")
+            return emoji_map
+    return {}
 
 OUTPUT_DIR = ""
 WORK_DIR = "work"
@@ -102,8 +118,11 @@ def create_subtitled_video(video_paths, horizontal: bool):
         audio_path = get_audio(video_path, WORK_DIR)
         whisperx_json_path = generate_and_write_whisperx_json(audio_path, WORK_DIR)
 
+        # Load emoji_map from sidecar if available
+        emoji_map = load_emoji_map(video_path)
+
         # Captions
-        subtitle_clips = build_overlays(video_clip, whisperx_json_path)
+        subtitle_clips = build_overlays(video_clip, whisperx_json_path, emoji_map)
 
         clip = CompositeVideoClip([video_clip] + subtitle_clips)
         clips.append(clip)
