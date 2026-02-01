@@ -9,19 +9,50 @@ import numpy as np
 from .face_tracking import track_face_centers
 
 
-def load_emoji_map(video_path):
-    """Load emoji_map from sidecar .meta.json file if it exists."""
+def load_sidecar(video_path):
+    """Load sidecar .meta.json data for a video file."""
     base, _ = os.path.splitext(video_path)
     sidecar = base + '.meta.json'
 
     if os.path.exists(sidecar):
         with open(sidecar) as f:
             data = json.load(f)
-            emoji_map = data.get("emoji_map", {})
-            if emoji_map:
-                print(f"Loaded emoji_map from {sidecar}: {emoji_map}")
-            return emoji_map
+            if data.get("emoji_map"):
+                print(f"Loaded emoji_map from {sidecar}: {data['emoji_map']}")
+            return data
     return {}
+
+
+def save_sidecar(video_path, data):
+    """Write updated sidecar .meta.json data for a video file."""
+    base, _ = os.path.splitext(video_path)
+    sidecar = base + '.meta.json'
+    with open(sidecar, 'w') as f:
+        json.dump(data, f, indent=2)
+
+
+def generate_cover_image(video_path, sidecar_data):
+    """Generate a DALL-E cover image if cover_prompt exists in sidecar data.
+
+    Writes cover_image path back into sidecar_data and saves it.
+    """
+    cover_prompt = sidecar_data.get("cover_prompt")
+    if not cover_prompt:
+        return
+
+    base, _ = os.path.splitext(video_path)
+    cover_path = base + '_cover.png'
+
+    if os.path.exists(cover_path):
+        print(f"Cover image already exists: {cover_path}")
+        sidecar_data["cover_image"] = cover_path
+        save_sidecar(video_path, sidecar_data)
+        return
+
+    success = generate_b_roll_image(cover_prompt, cover_path, vertical=True)
+    if success:
+        sidecar_data["cover_image"] = cover_path
+        save_sidecar(video_path, sidecar_data)
 
 OUTPUT_DIR = ""
 WORK_DIR = "work"
@@ -56,6 +87,11 @@ def main():
     os.makedirs(WORK_DIR, exist_ok=True)
 
     video_paths = args.pop("video")
+
+    # Generate cover images from sidecar cover_prompt (once per video)
+    for video_path in video_paths:
+        sidecar_data = load_sidecar(video_path)
+        generate_cover_image(video_path, sidecar_data)
 
     if not skip_vertical:
         create_subtitled_video(video_paths, False)
@@ -119,7 +155,7 @@ def create_subtitled_video(video_paths, horizontal: bool):
         whisperx_json_path = generate_and_write_whisperx_json(audio_path, WORK_DIR)
 
         # Load emoji_map from sidecar if available
-        emoji_map = load_emoji_map(video_path)
+        emoji_map = load_sidecar(video_path).get("emoji_map", {})
 
         # Captions
         subtitle_clips = build_overlays(video_clip, whisperx_json_path, emoji_map)

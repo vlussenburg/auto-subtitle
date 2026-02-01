@@ -4,7 +4,6 @@ import whisperx
 import json
 import tempfile
 
-import sys
 import os
 import base64
 from typing import Iterator, TextIO
@@ -131,27 +130,30 @@ def is_vertical(clip):
 
 def generate_b_roll_image(prompt: str, output_path: str, vertical: bool = True):
     from openai import OpenAI
-    client = OpenAI()
+    client = OpenAI(
+        base_url="https://external.api.recraft.ai/v1",
+        api_key=os.getenv("RECRAFT_API_KEY"),
+    )
 
     try:
         print(f"🎨 Generating B-roll for: {prompt[:80]}...")
-        orientation = "portrait" if vertical else "landscape"
-        size = "1024x1792" if vertical else "1792x1024"
+        size = "1024x1820" if vertical else "1820x1024"
         response = client.images.generate(
-            model="gpt-image-1",
-            prompt = (
-                f"The image should be composed specifically for a {orientation} frame (size {size}).\n"
-                f"Scene description: {prompt}"
-            )
+            model="recraftv3",
+            prompt=prompt,
+            size=size,
+            style="realistic_image",
+            response_format="b64_json",
         )
         image_base64 = response.data[0].b64_json
         image_bytes = base64.b64decode(image_base64)
         with open(output_path, "wb") as f:
             f.write(image_bytes)
         print(f"✅ Saved B-roll to {output_path}")
+        return True
     except Exception as e:
         print(f"❌ Failed to generate B-roll: {e}")
-        sys.exit(1)
+        return False
 
 def determine_broll_score(segment_text: str) -> tuple[int, str | None]:
     system_prompt = """
