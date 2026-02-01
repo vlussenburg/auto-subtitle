@@ -4,7 +4,6 @@ import whisperx
 import json
 import tempfile
 
-import sys
 import os
 import base64
 from typing import Iterator, TextIO
@@ -149,9 +148,10 @@ def generate_b_roll_image(prompt: str, output_path: str, vertical: bool = True):
         with open(output_path, "wb") as f:
             f.write(image_bytes)
         print(f"✅ Saved B-roll to {output_path}")
+        return True
     except Exception as e:
         print(f"❌ Failed to generate B-roll: {e}")
-        sys.exit(1)
+        return False
 
 def determine_broll_score(segment_text: str) -> tuple[int, str | None]:
     system_prompt = """
